@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<!--
+  SYNTHETIC / ILLUSTRATIVE — SSOS pipeline walkthrough.
+  ============================================================================
+  An animated tour of how a farm-year submission moves through the Sans Souci
+  Carbon Footprinting Orchestration Platform — for stakeholders and new starts.
+
+  Everything depicted is synthetic. No real farm data, no live calls; this file
+  opens over file:// and makes no network requests.
+
+  SOURCE MAP — what each depicted element comes from. Update this file and the
+  embedded #pipeline-manifest when these move; tests/test_pipeline_walkthrough_drift.py
+  checks the manifest against them.
+  ----------------------------------------------------------------------------
+  intake + contract + idempotency   apps/ssos_orchestrator_dotnet/src/Ssos.Intake/V1Api.cs
+  stage names + orchestration order apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
+                                    Orchestration.cs, PipelineExtensions.cs, Constants/StageNames.cs
+  stage behaviour                   apps/ssos_orchestrator_dotnet/src/Ssos.Pipeline/Stages.*.cs
+  fan-out mechanics                 apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
+                                    FanOutDispatcher.cs  +  src/Ssos.Domain/FanOut.cs
+  container + queue + marker names  apps/ssos_orchestrator_dotnet/src/Ssos.Domain/ResourceNames.cs
+  case + exchange states            apps/ssos_orchestrator_dotnet/src/Ssos.Domain/CaseLifecycle.cs,
+                                    FootprintCase.cs
+  control actions                   apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
+                                    Constants/ControlActions.cs
+  exchange leg                      apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Exchange/
+                                    ExchangeFunction.cs  +  src/Ssos.Exchange/DeliveryDecision.cs
+  ============================================================================
+-->
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSOS — the life of a submission</title>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #131a23; --panel2: #182130; --line: #2c3949;
+    --text: #e7eef7; --dim: #93a3b5; --mono: "Cascadia Code", "Consolas", ui-monospace, monospace;
+    --teal: #2dd4bf; --amber: #f5a524; --green: #3ddc97; --blue: #5ea8ff;
+    --red: #f8736b; --violet: #a78bfa; --zone-d01: #3b82f6; --zone-d02: #2dd4bf; --zone-d03: #f5a524;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(1200px 700px at 50% -10%, #14202e 0%, var(--bg) 60%);
+    color: var(--text); font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+  }
+  /* ---- header ---- */
+  header { width: 1280px; max-width: 96vw; display: flex; align-items: baseline; gap: 14px; padding: 18px 4px 10px; }
+  header h1 { font-size: 21px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  .badge {
+    margin-left: auto; font: 600 10.5px var(--mono); letter-spacing: .8px;
+    color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+    border-radius: 4px; padding: 3px 8px; background: color-mix(in srgb, var(--amber) 8%, transparent);
+  }
+  /* ---- controls ---- */
+  .controls {
+    width: 1280px; max-width: 96vw; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 8px 4px 12px;
+  }
+  .controls button, .controls select {
+    font: 600 12px "Segoe UI", system-ui, sans-serif; color: var(--text);
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer;
+  }
+  .controls button:hover, .controls select:hover { border-color: var(--teal); }
+  .controls button:focus-visible, .controls select:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+  .controls button.on { background: color-mix(in srgb, var(--teal) 18%, var(--panel2)); border-color: var(--teal); }
+  .controls .group { display: flex; gap: 6px; align-items: center; }
+  .controls .lbl { color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+  #beatPos { margin-left: auto; font: 600 12px var(--mono); color: var(--dim); }
+  /* ---- stage ---- */
+  #viewport { width: 1280px; max-width: 96vw; aspect-ratio: 16/9; position: relative; }
+  #stage {
+    position: absolute; inset: 0; transform-origin: top left;
+    width: 1280px; height: 720px;
+  }
+  #wires { position: absolute; inset: 0; }
+  .zone {
+    position: absolute; border: 1px dashed var(--line); border-radius: 10px;
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
+  }
+  .zone .zlabel {
+    position: absolute; top: -9px; left: 12px; font: 600 9.5px var(--mono); letter-spacing: .7px;
+    color: var(--dim); background: var(--bg); padding: 0 6px; text-transform: uppercase;
+  }
+  .zone.d01 { border-color: color-mix(in srgb, var(--zone-d01) 45%, transparent); }
+  .zone.d02 { border-color: color-mix(in srgb, var(--zone-d02) 45%, transparent); }
+  .zone.d03 { border-color: color-mix(in srgb, var(--zone-d03) 45%, transparent); }
+  .node {
+    position: absolute; width: 128px; min-height: 54px; padding: 7px 9px;
+    transform: translate(-50%, -50%); border-radius: 8px;
+    background: var(--panel2); border: 1px solid var(--line);
+    transition: box-shadow .3s, border-color .3s;
+  }
+  .node .t { display: block; font-size: 11.5px; font-weight: 650; }
+  .node .s { display: block; font-size: 9px; color: var(--dim); font-family: var(--mono); margin-top: 2px; line-height: 1.3; }
+  .node.actor { border-radius: 999px; text-align: center; width: 108px; min-height: 56px; display: flex; flex-direction: column; justify-content: center; }
+  .node.actor .s { margin-top: 1px; }
+  .node.store::before { content: "▤ "; color: var(--blue); font-size: 10px; }
+  .node.queue::before { content: "≣ "; color: var(--violet); font-size: 10px; }
+  .node.db::before { content: "◫ "; color: var(--green); font-size: 10px; }
+  .node.host::before { content: "⚙ "; color: var(--teal); font-size: 10px; }
+  .node.ext { border-style: double; border-width: 3px; }
+  .node.active { border-color: var(--teal); box-shadow: 0 0 22px color-mix(in srgb, var(--teal) 45%, transparent); }
+  .node.watchtag .s em { color: var(--green); font-style: normal; }
+  /* artefact chips */
+  .tray { position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 3px; align-items: center; z-index: 2; }
+  .chip {
+    font: 600 9.5px var(--mono); white-space: nowrap; color: var(--blue);
+    background: color-mix(in srgb, var(--panel2) 88%, var(--blue) 12%);
+    border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+    border-radius: 4px; padding: 2px 6px; animation: pop .35s ease-out;
+  }
+  .chip.last { color: var(--green); border-color: color-mix(in srgb, var(--green) 55%, transparent); }
+  .chip.last::after { content: " ★"; }
+  .chip.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  /* packet */
+  #packet {
+    position: absolute; z-index: 5; width: 86px; height: 20px; border-radius: 10px;
+    font: 700 9.5px var(--mono); color: #04211d; background: var(--teal);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 16px color-mix(in srgb, var(--teal) 70%, transparent);
+    transition: transform .65s cubic-bezier(.45,.05,.3,1), background .3s, box-shadow .3s;
+  }
+  #packet.held { background: var(--amber); color: #261a02; box-shadow: 0 0 18px color-mix(in srgb, var(--amber) 75%, transparent); }
+  #packet.refused { background: var(--red); color: #2a0705; }
+  #ghost {
+    position: absolute; z-index: 4; width: 62px; height: 16px; border-radius: 8px;
+    border: 1.5px dashed var(--dim); opacity: 0; transition: transform .55s ease, opacity .3s;
+  }
+  .dot {
+    position: absolute; z-index: 5; width: 26px; height: 14px; border-radius: 7px;
+    background: var(--violet); box-shadow: 0 0 10px color-mix(in srgb, var(--violet) 70%, transparent);
+    transition: transform .5s cubic-bezier(.45,.05,.3,1);
+    font: 700 7.5px var(--mono); color: #1b1033; display: flex; align-items: center; justify-content: center;
+  }
+  .dot.wait { background: var(--amber); color: #261a02; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  /* callout + gate + hold */
+  #callout {
+    position: absolute; z-index: 6; max-width: 250px; padding: 8px 10px; border-radius: 8px;
+    background: #1d2a3a; border: 1px solid var(--blue); font-size: 11px; line-height: 1.4;
+    opacity: 0; transition: opacity .35s; pointer-events: none;
+  }
+  #callout .c-loc { font: 600 9px var(--mono); color: var(--blue); display: block; margin-bottom: 3px; letter-spacing: .5px; }
+  #gate {
+    position: absolute; z-index: 6; padding: 6px 12px; border-radius: 999px;
+    font: 700 11px var(--mono); opacity: 0; transition: opacity .3s;
+    background: color-mix(in srgb, var(--green) 18%, var(--panel2));
+    border: 1px solid var(--green); color: var(--green);
+  }
+  #hold {
+    position: absolute; z-index: 7; left: 50%; top: 14px; transform: translateX(-50%);
+    padding: 10px 18px; border-radius: 8px; max-width: 560px; text-align: center;
+    background: color-mix(in srgb, var(--amber) 14%, var(--panel2));
+    border: 1px solid var(--amber); color: var(--amber);
+    font: 700 12px var(--mono); opacity: 0; transition: opacity .35s;
+  }
+  #hold .h-reason { display: block; font: 400 11px "Segoe UI", sans-serif; color: var(--text); margin-top: 4px; }
+  /* ---- narration ---- */
+  #narr {
+    width: 1280px; max-width: 96vw; display: grid; grid-template-columns: 1fr 0fr; gap: 12px; margin-top: 10px;
+  }
+  #narr.eng { grid-template-columns: 1fr 380px; }
+  #caption {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; min-height: 76px;
+  }
+  #caption .cap-title { font: 700 11px var(--mono); letter-spacing: .8px; color: var(--teal); text-transform: uppercase; margin-bottom: 5px; }
+  #caption .cap-body { font-size: 14.5px; }
+  #detail {
+    display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; font: 11px var(--mono); color: var(--dim); overflow: auto; max-height: 130px;
+  }
+  #narr.eng #detail { display: block; }
+  #detail .k { color: var(--blue); }
+  #detail div { white-space: nowrap; }
+  /* ---- state strips ---- */
+  .strip { width: 1280px; max-width: 96vw; display: flex; align-items: center; gap: 5px; padding: 10px 4px 2px; flex-wrap: wrap; }
+  .strip .lbl { font: 600 9.5px var(--mono); letter-spacing: .7px; color: var(--dim); text-transform: uppercase; margin-right: 6px; }
+  .pill {
+    font: 600 10px var(--mono); color: var(--dim); padding: 3px 8px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); transition: all .3s;
+  }
+  .pill.on { color: #04211d; background: var(--teal); border-color: var(--teal); }
+  .pill.done { color: var(--teal); border-color: color-mix(in srgb, var(--teal) 45%, transparent); }
+  .pill.bad.on { color: #2a0705; background: var(--red); border-color: var(--red); }
+  .pill.warn.on { color: #261a02; background: var(--amber); border-color: var(--amber); }
+  .pill.sep { border: none; background: none; color: var(--line); padding: 0 2px; }
+  footer { color: var(--dim); font-size: 11px; padding: 12px 4px 20px; width: 1280px; max-width: 96vw; }
+  footer code { font-family: var(--mono); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>The life of a submission</h1>
+  <span class="sub">SSOS — Sans Souci Carbon Footprinting Orchestration</span>
+  <span class="badge">SYNTHETIC · ILLUSTRATIVE</span>
+</header>
+
+<div class="controls" role="toolbar" aria-label="walkthrough controls">
+  <div class="group">
+    <span class="lbl">Scenario</span>
+    <select id="scenario" aria-label="scenario">
+      <option value="journey">A farm year's journey</option>
+      <option value="held">Held for readiness</option>
+      <option value="refused">Refused at the door</option>
+    </select>
+  </div>
+  <div class="group">
+    <button id="playBtn" aria-label="play or pause">▶ Play</button>
+    <button id="backBtn" aria-label="step back">‹</button>
+    <button id="fwdBtn" aria-label="step forward">›</button>
+    <button id="restartBtn" aria-label="restart">⟲</button>
+  </div>
+  <div class="group">
+    <span class="lbl">Speed</span>
+    <select id="speed" aria-label="speed">
+      <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option>
+    </select>
+  </div>
+  <div class="group">
+    <button id="engBtn" aria-label="toggle engineer detail" aria-pressed="false">Engineer detail</button>
+  </div>
+  <span id="beatPos" aria-live="polite">—</span>
+</div>
+
+<div id="viewport"><div id="stage">
+  <canvas id="wires" width="1280" height="720"></canvas>
+
+  <div class="zone d01" style="left:170px;top:70px;width:265px;height:530px"><span class="zlabel">ingestion account · d01</span></div>
+  <div class="zone"     style="left:450px;top:70px;width:145px;height:240px"><span class="zlabel">eventing</span></div>
+  <div class="zone d02" style="left:610px;top:70px;width:325px;height:530px"><span class="zlabel">orchestrator account · d02</span></div>
+  <div class="zone d03" style="left:950px;top:160px;width:175px;height:480px"><span class="zlabel">exchange account · d03</span></div>
+
+  <div class="node actor" id="n-lmc"    style="left:85px;top:335px"><span class="t">LMC</span><span class="s">upstream<br>aggregator</span></div>
+  <div class="node host"  id="n-ingestion" style="left:302px;top:120px"><span class="t">fa-ingestion</span><span class="s">v1 API · .NET isolated</span></div>
+  <div class="node store" id="n-vrules" style="left:302px;top:225px"><span class="t">ssos-validation-rules</span><span class="s">contract reference data</span></div>
+  <div class="node store" id="n-staging" style="left:302px;top:330px"><span class="t">ssos-submission-staging</span><span class="s">not watched</span><div class="tray" id="tray-staging"></div></div>
+  <div class="node store watchtag" id="n-raw" style="left:302px;top:455px"><span class="t">ssos-raw-submissions</span><span class="s"><em>watched</em> · commit-marker write</span><div class="tray" id="tray-raw"></div></div>
+
+  <div class="node host" id="n-eg1" style="left:522px;top:120px;width:120px"><span class="t">Event Grid</span><span class="s">BlobCreated</span></div>
+  <div class="node queue" id="n-sbq" style="left:522px;top:225px;width:120px"><span class="t">ssos-submission</span><span class="s">Service Bus · CloudEvents 1.0</span></div>
+
+  <div class="node ext"  id="n-fct" style="left:772px;top:26px;width:220px;min-height:34px;padding:4px 9px"><span class="t">Farm Carbon Toolkit</span><span class="s">external calculator · 11 endpoints · 5 req/s estate-wide</span></div>
+
+  <div class="node host" id="n-orch" style="left:772px;top:120px"><span class="t">fa-orchestrator</span><span class="s">Durable Task · deterministic</span><div class="tray" id="tray-orch" style="display:none"></div></div>
+  <div class="node db"   id="n-sql" style="left:680px;top:225px"><span class="t">ssos.* · Azure SQL</span><span class="s">case, dataset, ledger,<br>artefact metadata</span><div class="tray" id="tray-sql"></div></div>
+  <div class="node store" id="n-canonical" style="left:862px;top:225px"><span class="t">ssos-canonical</span><span class="s">{year}/{guid}/{case}/</span><div class="tray" id="tray-canonical"></div></div>
+  <div class="node store" id="n-preq" style="left:680px;top:335px"><span class="t">ssos-provider-requests</span><span class="s">plan + request bodies</span><div class="tray" id="tray-preq"></div></div>
+  <div class="node store" id="n-presp" style="left:862px;top:328px"><span class="t">ssos-provider-responses</span><span class="s">replies + aggregate</span><div class="tray" id="tray-presp"></div></div>
+  <div class="node store" id="n-mapping" style="left:680px;top:445px"><span class="t">ssos-mapping-rules</span><span class="s">approved crosswalks · read only</span></div>
+  <div class="node store" id="n-draft" style="left:862px;top:445px"><span class="t">ssos-output-draft-packages</span><span class="s">result + model + pdf</span><div class="tray" id="tray-draft"></div></div>
+
+  <div class="node host" id="n-renderer" style="left:1037px;top:90px;width:150px"><span class="t">PDF renderer</span><span class="s">Python · Playwright container</span></div>
+  <div class="node store watchtag" id="n-outp" style="left:1037px;top:190px;width:150px"><span class="t">ssos-output-packages</span><span class="s"><em>watched</em> · manifest last</span><div class="tray" id="tray-outp"></div></div>
+  <div class="node host" id="n-eg2" style="left:1037px;top:352px;width:120px"><span class="t">Event Grid</span><span class="s">BlobCreated</span></div>
+  <div class="node queue" id="n-sbx" style="left:1037px;top:435px;width:120px"><span class="t">ssos-exchange</span><span class="s">Service Bus</span></div>
+  <div class="node host" id="n-exch" style="left:1037px;top:545px;width:120px"><span class="t">fa-exchange</span><span class="s">.NET isolated</span></div>
+  <div class="node actor" id="n-daera" style="left:1190px;top:545px;width:96px"><span class="t">DAERA</span><span class="s">DOLS +<br>analytics</span></div>
+
+  <div style="position:absolute;left:178px;top:622px;font:600 10px var(--mono);color:var(--dim);letter-spacing:.3px">
+    ▤ storage &nbsp;·&nbsp; ≣ queue &nbsp;·&nbsp; ◫ database &nbsp;·&nbsp; ⚙ host &nbsp;·&nbsp; ⇢ packet &nbsp;·&nbsp;
+    <span style="color:var(--green)">★ written last — commit marker</span>
+  </div>
+
+  <div id="packet" role="img" aria-label="the submission">submission</div>
+  <div id="ghost"></div>
+  <div id="callout"></div>
+  <div id="gate"></div>
+  <div id="hold"></div>
+</div></div>
+
+<div id="narr">
+  <div id="caption"><div class="cap-title" id="capTitle">Ready</div><div class="cap-body" id="capBody">
+    Press <b>▶ Play</b> — or step through with <b>›</b>. Toggle <b>Engineer detail</b> for the real
+    container, queue, artefact and stage names at every beat.
+  </div></div>
+  <div id="detail" aria-label="engineer detail"></div>
+</div>
+
+<div class="strip" aria-label="case lifecycle"><span class="lbl">case</span><span id="caseStrip"></span></div>
+<div class="strip" aria-label="exchange lifecycle"><span class="lbl">exchange</span><span id="exchStrip"></span></div>
+
+<footer>
+  Every name on screen is real: this file's embedded manifest is checked against the platform's
+  code constants by <code>tests/test_pipeline_walkthrough_drift.py</code> in
+  <code>carbon-footprinting-orchestration</code>. All data is synthetic. Source map is in the
+  file's header comment.
+</footer>
+
+<script type="application/json" id="pipeline-manifest">
+{
+  "scenarios": ["journey", "held", "refused"],
+  "stages": ["intake", "inventory", "canonicalise", "check_control", "plan",
+             "dispatch", "dispatch_task", "collect_responses", "build_outputs",
+             "render", "render_pdf", "release", "orchestration", "exchange"],
+  "containers": ["ssos-submission-staging", "ssos-raw-submissions", "ssos-validation-rules",
+                 "ssos-canonical", "ssos-provider-requests", "ssos-provider-responses",
+                 "ssos-mapping-rules", "ssos-output-draft-packages", "ssos-output-packages"],
+  "queues": ["ssos-submission", "ssos-exchange"],
+  "artefacts": ["submission.json", "canonical.json", "request-plan.json",
+                "requests/{task}.json", "replies/{task}.json", "replies/{task}.attempt-N.json",
+                "provider-responses.json", "result.json", "report-model.json",
+                "footprint.pdf", "manifest.json"],
+  "controlActions": ["dispatch_fct", "render_report", "release"],
+  "caseStates": ["accepted", "canonicalising", "validating_readiness", "held", "planning",
+                 "calculating", "retrying", "reconciling", "calculated", "generating_output",
+                 "completed", "completed_with_warnings", "failed"],
+  "exchangeStates": ["not_started", "ready", "exchanging", "delivered", "delivery_failed"],
+  "blockerOwners": ["LMC", "SANS_SOUCI"],
+  "endpoints": ["POST /api/v1/sanssouci/carbonfootprints",
+                "GET /api/v1/sanssouci/carbonfootprints/{id}/status",
+                "GET /api/v1/sanssouci/carbonfootprints/{id}/results"],
+  "commitMarkers": ["submission.json", "manifest.json"]
+}
+</script>
+
+<script>
+"use strict";
+
+/* ---------- geometry ---------- */
+const NODES = {
+  lmc:       { x: 85,  y: 335 },
+  ingestion: { x: 302, y: 120 },
+  vrules:    { x: 302, y: 225 },
+  staging:   { x: 302, y: 330 },
+  raw:       { x: 302, y: 455 },
+  eg1:       { x: 522, y: 120 },
+  sbq:       { x: 522, y: 225 },
+  fct:       { x: 772, y: 26  },
+  orch:      { x: 772, y: 120 },
+  sql:       { x: 680, y: 225 },
+  canonical: { x: 862, y: 225 },
+  preq:      { x: 680, y: 335 },
+  presp:     { x: 862, y: 328 },
+  mapping:   { x: 680, y: 445 },
+  draft:     { x: 862, y: 445 },
+  renderer:  { x: 1037, y: 90  },
+  outp:      { x: 1037, y: 190 },
+  eg2:       { x: 1037, y: 352 },
+  sbx:       { x: 1037, y: 435 },
+  exch:      { x: 1037, y: 545 },
+  daera:     { x: 1190, y: 545 },
+};
+
+const WIRES = [
+  ["lmc","ingestion"], ["ingestion","vrules","dash"], ["ingestion","staging"],
+  ["staging","raw"], ["raw","eg1"], ["eg1","sbq"], ["sbq","orch"],
+  ["orch","sql"], ["orch","canonical"], ["orch","mapping","dash"],
+  ["orch","fct","dash"], ["fct","presp","dash"], ["orch","preq"],
+  ["orch","presp"], ["orch","draft"], ["draft","renderer","dash"],
+  ["draft","outp"], ["outp","eg2"], ["eg2","sbx"], ["sbx","exch"], ["exch","daera"],
+];
+
+function drawWires() {
+  const c = document.getElementById("wires"), g = c.getContext("2d");
+  g.strokeStyle = "rgba(140,160,185,0.28)"; g.lineWidth = 1.2;
+  for (const [a, b, style] of WIRES) {
+    const A = NODES[a], B = NODES[b];
+    g.setLineDash(style === "dash" ? [5, 5] : []);
+    g.beginPath(); g.moveTo(A.x, A.y); g.lineTo(B.x, B.y); g.stroke();
+    const ang = Math.atan2(B.y - A.y, B.x - A.x), ax = B.x - 62 * Math.cos(ang), ay = B.y - 30 * Math.sin(ang);
+    g.beginPath(); g.moveTo(ax, ay);
+    g.lineTo(ax - 6 * Math.cos(ang - 0.45), ay - 6 * Math.sin(ang - 0.45));
+    g.moveTo(ax, ay);
+    g.lineTo(ax - 6 * Math.cos(ang + 0.45), ay - 6 * Math.sin(ang + 0.45));
+    g.stroke();
+  }
+  g.setLineDash([]);
+}
+
+/* ---------- state strips ---------- */
+const CASE_STATES = ["accepted","canonicalising","validating_readiness","planning","calculating",
+                     "retrying","reconciling","calculated","generating_output","completed",
+                     "completed_with_warnings","held","failed"];
+const EXCH_STATES = ["not_started","ready","exchanging","delivered","delivery_failed"];
+
+function buildStrip(id, states) {
+  const el = document.getElementById(id);
+  el.innerHTML = "";
+  states.forEach((s, i) => {
+    if (id === "caseStrip" && s === "held") {
+      const sep = document.createElement("span"); sep.className = "pill sep"; sep.textContent = "·"; el.appendChild(sep);
+    }
+    const p = document.createElement("span");
+    p.className = "pill" + (s === "failed" || s === "delivery_failed" ? " bad" : s === "held" || s === "retrying" ? " warn" : "");
+    p.id = id + "-" + s; p.textContent = s; el.appendChild(p);
+  });
+}
+const caseSeen = new Set(), exchSeen = new Set();   // states the case actually visited —
+function setStrip(id, states, current) {            // "done" means visited, not "earlier in the list"
+  const seen = id === "caseStrip" ? caseSeen : exchSeen;
+  if (current) seen.add(current);
+  states.forEach(s => {
+    const p = document.getElementById(id + "-" + s); if (!p) return;
+    p.classList.toggle("on", s === current);
+    p.classList.toggle("done", seen.has(s) && s !== current);
+  });
+}
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const packet = $("packet"), ghost = $("ghost"), callout = $("callout"),
+      gate = $("gate"), hold = $("hold");
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let speed = 1;
+const wait = ms => new Promise(r => setTimeout(r, RM ? 0 : ms / speed));
+const pos = (n, dx = 0, dy = 0) => `translate(${NODES[n].x - 43 + dx}px, ${NODES[n].y - 10 + dy}px)`;
+
+let packetAt = "lmc";
+const pk = n => pos(n, 0, -38);   // the packet hovers just above the node it is at
+const dp = (n, dx = 0, dy = 0) => pos(n, dx + 30, dy + 3);   // centre a 26px dot on a node
+function movePacket(to, cls) {
+  packetAt = to;
+  packet.className = cls || "";
+  packet.style.transform = pk(to);
+}
+function chip(node, name, kind, beatIdx) {
+  const tray = $("tray-" + node); if (!tray) return;
+  if ([...tray.children].some(c => c.textContent === name && +(c.dataset.beat ?? -1) === (beatIdx ?? -2))) return;
+  const c = document.createElement("span");
+  c.className = "chip" + (kind ? " " + kind : "");
+  if (beatIdx !== undefined) c.dataset.beat = beatIdx;
+  c.textContent = name; tray.appendChild(c);
+}
+function active(node) {
+  document.querySelectorAll(".node.active").forEach(n => n.classList.remove("active"));
+  if (node) { const el = $("n-" + node); if (el) el.classList.add("active"); }
+}
+function showCallout(node, text, loc) {
+  callout.innerHTML = `<span class="c-loc">${loc || node}</span>${text}`;
+  const p = NODES[node];
+  callout.style.left = Math.min(Math.max(p.x + 70, 10), 1030) + "px";
+  callout.style.top = Math.max(p.y - 40, 8) + "px";
+  callout.style.opacity = 1;
+}
+function showGate(action) {
+  gate.textContent = `⚑ control gate · ${action} → PROCEED`;
+  gate.style.left = (NODES.orch.x - 130) + "px"; gate.style.top = (NODES.orch.y + 42) + "px";
+  gate.style.opacity = 1;
+}
+function showHold(reason, owner) {
+  hold.innerHTML = `CASE HELD · blocker_owner: ${owner}<span class="h-reason">${reason}</span>`;
+  hold.style.opacity = 1;
+}
+function clearTransient() {
+  callout.style.opacity = 0; gate.style.opacity = 0; hold.style.opacity = 0;
+  document.querySelectorAll(".dot").forEach(d => d.remove());
+  ghost.style.opacity = 0;
+}
+function showTransient(b) {
+  if (b.hold) showHold(b.hold.reason, b.hold.owner);
+  if (b.gate) showGate(b.gate);
+  if (b.callout) showCallout(b.callout.node, b.callout.text, b.callout.loc);
+}
+let lastHold = false;
+
+/* ---------- captions ---------- */
+function caption(title, body, detail) {
+  $("capTitle").textContent = title;
+  $("capBody").innerHTML = body;
+  const d = $("detail");
+  d.innerHTML = (detail || []).map(([k, v]) => `<div><span class="k">${k}:</span> ${v}</div>`).join("");
+}
+
+/* ---------- beats ---------- */
+/* move    — animate the packet to a node
+   node    — which node card glows
+   arte    — [{node,name,kind}] chips to add
+   case    — case state lit on the strip
+   exch    — exchange state lit
+   gate    — control-gate badge shown
+   callout — {node,text,loc}
+   hold    — {reason,owner} hold banner + amber packet
+   resume  — clears a previous hold
+   ghost   — replay dashed packet
+   fanout  — run the dispatch fan-out sequence
+   dots    — quick fan-out sketch for the compressed scenario
+*/
+const INTAKE = [
+  { move:"ingestion", node:"ingestion", case:"accepted", title:"A farm year arrives",
+    s:"LMC finishes gathering a farm's year — DAERA, NIFAIS, GIS and scheme data — and posts it to the platform's one public endpoint. One farm, one footprint year, one submission.",
+    e:"LMC POSTs the farm-year payload. Auth + JSON validity first; the response is 202 plus an opaque carbon_footprint_id derived from the payload fingerprint.",
+    d:[["endpoint","POST /api/v1/sanssouci/carbonfootprints"],["identity","subject.guid only — identity-light"],["file","Ssos.Intake/V1Api.cs → SubmitAsync"]] },
+  { ghost:true, node:"ingestion", case:"accepted", title:"Replay is safe",
+    s:"If LMC sends the same submission twice, a fingerprint over the payload recognises it — identical bytes get the same answer back, and a changed payload under a known id is refused as a conflict.",
+    e:"PayloadFingerprint vs ssos.footprint_case → 202 idempotent_replay, or 409 conflict on a materially different payload. 400 SSOS-SCHEMA-000 for malformed JSON; 401 SSOS-AUTH-001 when the auth mode denies.",
+    d:[["replay","202 · idempotent_replay"],["conflict","409 · different fingerprint, same submission_id"],["file","Ssos.Intake/V1Api.cs + Ssos.Domain/Idempotency.cs"]] },
+  { move:"staging", node:"staging", arte:[{node:"staging",name:"payload parts"}], case:"accepted", title:"Stage, then promote",
+    s:"The payload lands where nothing is watching. Evidence of what arrived is kept before anything is judged — even a rejected submission leaves a trace.",
+    e:"IntakeSequence.ProcessIntakeAsync stages parts into ssos-submission-staging (not watched) before contract validation — a refused submission still leaves evidence.",
+    d:[["container","ssos-submission-staging"],["watched","no"],["file","Ssos.Intake/IntakeModels.cs · IntakeSequence"]] },
+  { move:"raw", node:"raw", arte:[{node:"raw",name:"submission.json",kind:"last"}], case:"accepted", title:"Commit marker",
+    s:"Contract validation runs. Only a valid submission is promoted into the watched container — and submission.json is written last, so a partial upload can never raise the event.",
+    e:"Contract-valid only: submission.json is the commit marker — written last into ssos-raw-submissions (watched). Invalid → synchronous refusal, nothing promoted.",
+    d:[["container","ssos-raw-submissions · watched"],["marker","submission.json — written last"],["rules","ssos-validation-rules"]] },
+  { move:"eg1", node:"eg1", case:"accepted", title:"One event",
+    s:"The blob landing raises exactly one event. The platform is woken by storage, not by polling — and only once per completed submission.",
+    e:"BlobCreated on ssos-raw-submissions → Event Grid → CloudEvents 1.0 envelope → ssos-submission queue.",
+    d:[["queue","ssos-submission"],["envelope","CloudEvents 1.0"],["file","Ssos.Domain/CloudEvents.cs"]] },
+  { move:"sbq", node:"sbq", case:"accepted", title:"Into the queue",
+    s:"The event rides Service Bus to the orchestrator — decoupled, durable, and retried by the platform rather than by LMC.",
+    e:"Service Bus ssos-submission → StartFromSubmission parses the envelope; an event naming an unexpected container or blob is refused, not followed.",
+    d:[["queue","ssos-submission"],["file","Orchestration.cs → StartFromSubmission"]] },
+  { move:"orch", node:"orch", case:"accepted", title:"Orchestration starts",
+    s:"A Durable orchestration starts, keyed by the blob path — a redelivered event finds the same instance and resumes rather than running twice.",
+    e:"instance id = ssos-{blob-path}; a Running/Pending instance is not duplicated. Every activity hands the next a reference, never a body — farm data stays out of the task hub.",
+    d:[["orchestration","SsosFootprintOrchestration"],["file","Orchestration.cs + PipelineExtensions.cs"]] },
+];
+
+const MID = [
+  { move:"sql", node:"sql", arte:[{node:"sql",name:"ssos.footprint_case"}], case:"canonicalising", title:"Inventory — who, which year",
+    s:"Inventory reads the submission's identity — a farm GUID, the footprint year, the submission id — and opens a case. The platform never learns a farm's name or address.",
+    e:"inventory: subject.guid + footprint_year + submission_id → find or open ssos.footprint_case. Missing identity or a terminal existing case → refusal owned by LMC.",
+    d:[["stage","inventory"],["state","accepted → canonicalising"],["file","Ssos.Pipeline/Stages.Inventory.cs"]] },
+  { move:"canonical", node:"canonical", arte:[{node:"canonical",name:"canonical.json"}], case:"validating_readiness", title:"Canonicalise + readiness",
+    s:"The farm's data is canonicalised against approved crosswalks — controlled codes resolved explicitly, never approximated — then assessed: is there enough here to plan a calculation?",
+    e:"canonicalise: CanonicalisationEngine + ICodeCrosswalk → canonical.json under {year}/{guid}/{case}/; Readiness.AssessReadiness gates planning; the farm dataset + exceptions persist to ssos.* either way.",
+    d:[["stage","canonicalise"],["artefact","canonical.json → ssos-canonical"],["gates","crosswalk absent → refuse (SANS_SOUCI) · readiness → hold (LMC)"],["file","Stages.Canonicalise.cs + Readiness.cs"]] },
+  { node:"orch", gate:"dispatch_fct", case:"planning", title:"Control gate — spending calls",
+    s:"Before anything irreversible, the orchestration asks the operator's control gate. Calling the calculator spends a shared estate budget — a posture switch can stop it here.",
+    e:"check_control: ControlGate.ControlPermits(\"dispatch_fct\") — the estate posture is read before the irreversible step; a refused gate holds the case.",
+    d:[["stage","check_control"],["action","dispatch_fct"],["file","Stages.Control.cs + ControlGate.cs"]] },
+  { move:"preq", node:"preq", arte:[{node:"preq",name:"request-plan.json"}], case:"planning", title:"Plan every call",
+    s:"A plan names every calculator call this farm needs — derived from the canonical data and routing rules — and the whole task list is registered in a ledger before the first call goes out.",
+    e:"plan: Derivation.DeriveTaskSpecifications + routing rules → request-plan.json (PLAN-{case}) → ssos-provider-requests; IDispatchLedger.RecordPlannedAsync registers every task + fingerprint.",
+    d:[["stage","plan"],["artefact","request-plan.json"],["ledger","planned population known before call #1"],["file","Stages.Plan.cs + Derivation.cs + Planning.cs"]] },
+];
+
+const DISPATCH = [
+  { node:"orch", fanout:true, case:"calculating", title:"Dispatch — fan-out five at a time",
+    arte:[{node:"preq",name:"requests/{task}.json ×5"},{node:"presp",name:"replies/{task}.json ×5"},{node:"presp",name:"replies/{task}.attempt-2.json",kind:"warn"}],
+    s:"The plan fans out — five tasks at a time, in parallel rounds. Every request body is stored before its permit is spent, the whole estate shares one calculator at five calls a second, and a throttled task waits on a durable timer rather than spinning.",
+    e:"dispatch_task per task: control permit → ledger check (a replayed answer suppresses the call) → store requests/{task}.json → take permit → call FCT → write replies/{task}.json. Retryable → replies/{task}.attempt-N.json + next attempt; throttled → re-offered after a timer (≤20 rounds).",
+    d:[["stage","dispatch_task · FctBurst = 5"],["limiter","5 req/s estate-wide — every call is a production action"],["artefacts","requests/{task}.json · replies/{task}.json · replies/{task}.attempt-N.json"],["file","Stages.Dispatch.cs + FanOut.cs + FanOutDispatcher.cs"]] },
+  { move:"presp", node:"presp", arte:[{node:"presp",name:"provider-responses.json"}], case:"reconciling", title:"Collect every reply",
+    s:"Replies are gathered into one record — written whether or not the fan-out finished, because a partial set is still the only record of the calls that were made.",
+    e:"collect_responses → provider-responses.json → ssos-provider-responses: per task — status, exchange flag, request + reply references, body.",
+    d:[["stage","collect_responses"],["artefact","provider-responses.json"],["file","Stages.Dispatch.cs → CollectResponsesStageAsync"]] },
+];
+
+const OUT = [
+  { node:"orch", gate:"render_report", case:"calculated", title:"Control gate — building output",
+    s:"Another gate before the output is built — the operator's posture is re-read at every irreversible step, not once at the start.",
+    e:"check_control: ControlPermits(\"render_report\") — refused gates hold; the case resumes where it was held.",
+    d:[["stage","check_control"],["action","render_report"],["file","PipelineExtensions.cs → CheckClearanceFor"]] },
+  { move:"draft", node:"draft", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"}], case:"generating_output", title:"Reconcile, then build outputs",
+    s:"What arrived is reconciled against what was planned — an answered population that doesn't reconcile holds the case. Only then are the raw result and report model written. No figure is invented.",
+    e:"build_outputs: Arrival.ReconcileArrivals gates aggregation (hold owner SANS_SOUCI) → result.json (the only record of what the calculator returned) + report-model.json → ssos-output-draft-packages; farm calculations persist to ssos.*",
+    d:[["stage","build_outputs"],["artefacts","result.json · report-model.json"],["container","ssos-output-draft-packages"],["file","Stages.Outputs.cs + OutputStage.cs"]] },
+  { node:"renderer", arte:[{node:"draft",name:"footprint.pdf"}], case:"generating_output", title:"Render the report",
+    s:"The renderer — the one component that carries a browser — reads the model from storage itself and produces the Carbon Footprint PDF. Transient failures retry on durable timers.",
+    e:"render_pdf: the renderer container reads report-model.json from ssos-output-draft-packages and writes footprint.pdf — both ends of the render recorded; RenderRetry drives durable-timer retries.",
+    d:[["stage","render_pdf"],["artefact","footprint.pdf"],["file","Stages.Render.cs + RenderRetry.cs · apps/ssos_pdf_renderer"]] },
+  { node:"orch", gate:"release", case:"generating_output", title:"Control gate — release",
+    s:"The last gate. Release crosses the account boundary and starts delivery to DAERA — deliberately irreversible, deliberately gated.",
+    e:"check_control: ControlPermits(\"release\") — delivery is irreversible once the manifest lands.",
+    d:[["stage","check_control"],["action","release"],["file","Stages.Release.cs"]] },
+  { move:"outp", node:"outp", arte:[{node:"outp",name:"result.json"},{node:"outp",name:"report-model.json"},{node:"outp",name:"footprint.pdf"},{node:"outp",name:"manifest.json",kind:"last"}], case:"completed", title:"Release — manifest written last",
+    s:"The package crosses into the exchange account; every artefact is recorded with a checksum the store is asked to read back, and manifest.json is written last — the commit marker that actually releases it.",
+    e:"release: copy result.json + report-model.json + footprint.pdf → ssos-output-packages (d03); ssos.result_artefact rows before the manifest; the manifest attests to what is there, verified by reading checksums back.",
+    d:[["stage","release"],["marker","manifest.json — written last, Event Grid filters for it"],["boundary","d02 → d03 account separation is load-bearing"],["file","Stages.Release.cs"]] },
+];
+
+const EXCHANGE = [
+  { move:"eg2", node:"eg2", exch:"ready", title:"Release raises the second event",
+    s:"The manifest landing raises the second event — release and delivery are separate concerns, on separate queues.",
+    e:"BlobCreated on manifest.json in ssos-output-packages → Event Grid → CloudEvents 1.0 → ssos-exchange.",
+    d:[["queue","ssos-exchange"],["watch","ssos-output-packages · manifest.json only"]] },
+  { move:"sbx", node:"sbx", exch:"exchanging", title:"To the exchange app",
+    s:"The exchange app — which can read only its own account — observes the released package.",
+    e:"fa-exchange parses the event; a blob naming an unexpected container is refused, a refusal completes the message rather than retrying it.",
+    d:[["host","fa-exchange · .NET isolated"],["file","ExchangeFunction.cs"]] },
+  { move:"daera", node:"daera", exch:"delivered", title:"Handed toward DAERA",
+    s:"The Carbon Footprint Output Pack heads to DAERA — for DOLS and analytics. The delivery channel itself is still being agreed, so today the platform records exactly what it would deliver rather than inventing a destination.",
+    e:"DeliveryDecision.DeliverToDaera — the channel is undecided (#28): push, pull, or a DAERA-owned account. The handler records the intent and refuses to guess.",
+    d:[["exchange","not_started → ready → exchanging → delivered"],["open question","#28 delivery channel"],["file","ExchangeFunction.cs + DeliveryDecision.cs"]] },
+  { node:"daera", case:"completed", exch:"delivered", title:"Submitted to delivered",
+    s:"One farm year, end to end — every artefact named, every refusal a state with an owner, nothing invented. LMC reads status and results back through the same API; the ops app observes everything, touches nothing.",
+    e:"Case completed. Read-back: GET …/{id}/status + /results (409 until output is available). fa-ops is read-only by ADR 0045.",
+    d:[["read-back","GET /api/v1/sanssouci/carbonfootprints/{id}/status · /results"],["posture","fa-ops observes; it does not act"],["file","V1Api.cs · OpsApi.cs"]] },
+];
+
+const HELD_TAIL = [
+  { move:"orch", node:"canonical", hold:{reason:"Calculation readiness could not be established.", owner:"LMC"}, case:"held",
+    seen:["validating_readiness"],
+    arte:[{node:"canonical",name:"canonical.json"},{node:"sql",name:"dataset + exceptions"}], title:"Held — not failed",
+    s:"Readiness could not be established — maybe a required field is missing or unmapped. The case holds with a named owner; its canonical record, farm dataset and every exception are already persisted for the reviewer.",
+    e:"canonicalise → Readiness.AssessReadiness: MayPlan false → held, blocker_owner LMC. Evidence persists regardless — a held submission is exactly the population the review queue exists for.",
+    d:[["stage","canonicalise"],["state","validating_readiness → held"],["owner","LMC"],["file","Stages.Canonicalise.cs + Readiness.cs"]] },
+  { resume:true, node:"orch", case:"planning", title:"Resumed where it held",
+    s:"Once the blocker is dispositioned — LMC supplies the missing data — the case resumes where it was held. Nothing is replayed from the start; every stage's artefacts already exist under the case prefix.",
+    e:"held → planning is a declared transition; replayed stages overwrite the same case-derived keys, so resume is idempotent by construction.",
+    d:[["transition","held → planning (declared)"],["file","CaseLifecycle.cs"]] },
+  { node:"orch", dots:true, arte:[{node:"preq",name:"request-plan.json"},{node:"presp",name:"provider-responses.json"}], case:"calculating", title:"Plan, dispatch, collect — as before",
+    s:"From here the journey is identical: plan, fan-out, collect — five at a time under the same 5-calls-a-second budget.",
+    e:"plan → dispatch_task (FctBurst 5) → collect_responses — see the journey scenario for the full mechanics.",
+    d:[["stages","plan · dispatch_task · collect_responses"]] },
+  { move:"outp", node:"outp", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"},{node:"draft",name:"footprint.pdf"},{node:"outp",name:"result.json"},{node:"outp",name:"report-model.json"},{node:"outp",name:"footprint.pdf"},{node:"outp",name:"manifest.json",kind:"last"}], case:"completed", title:"Outputs, render, release",
+    s:"Reconciliation, report model, PDF, release — manifest.json written last into the watched container.",
+    e:"build_outputs → render_pdf → release — manifest.json is the commit marker into ssos-output-packages.",
+    d:[["stages","build_outputs · render_pdf · release"]] },
+  { move:"daera", node:"daera", exch:"delivered", title:"Delivered after the hold",
+    s:"The pack reaches DAERA — a hold costs time, never correctness. The alternative would be a footprint built on data nobody verified.",
+    e:"exchange → delivered. A hold is a state with an owner, not an exception.",
+    d:[["exchange","delivered"]] },
+];
+
+const SCENARIOS = {
+  journey: { beats: [...INTAKE, ...MID, ...DISPATCH, ...OUT, ...EXCHANGE] },
+  held:    { beats: [...INTAKE.slice(0,7), { move:"sql", node:"sql", arte:[{node:"sql",name:"ssos.footprint_case"}], case:"canonicalising", title:"Inventory — who, which year",
+              s:"Same start as the happy journey: identity read, case opened.",
+              e:"inventory: subject.guid + footprint_year + submission_id → ssos.footprint_case.",
+              d:[["stage","inventory"],["file","Stages.Inventory.cs"]] },
+             ...HELD_TAIL] },
+  refused: { beats: [
+    { move:"ingestion", node:"ingestion", case:"accepted", title:"A submission that isn't",
+      s:"LMC posts a payload — but this one is missing the footprint year, and the species code isn't in any approved crosswalk.",
+      e:"POST /api/v1/sanssouci/carbonfootprints — the body parses, the contract doesn't pass.",
+      d:[["endpoint","POST /api/v1/sanssouci/carbonfootprints"]] },
+    { move:"staging", node:"staging", arte:[{node:"staging",name:"payload parts"}], case:"accepted", title:"Evidence still lands",
+      s:"The payload is staged — evidence of what arrived is kept even when nothing else will happen.",
+      e:"ssos-submission-staging keeps the parts; nothing watches this container.",
+      d:[["container","ssos-submission-staging · not watched"]] },
+    { node:"vrules", case:"accepted", title:"Validation refuses",
+      s:"Contract validation fails: no footprint year, an unmapped code. The payload is never promoted, no event fires, no case opens — and LMC gets a synchronous, structured refusal that reports paths, never values.",
+      e:"422 + errors[] — each carries code/severity/path/message (SSOS-SCHEMA-*, SSOS-AUTH-001 for auth). Paths reported, never values.",
+      d:[["response","422 · validation error body"],["watch","no submission.json → no BlobCreated → no orchestration"],["file","V1Api.cs + Stage1Validator.cs"]] },
+    { move:"lmc", node:"lmc", refused:true, case:"failed", title:"Back to LMC",
+      s:"The refusal travels back synchronously. A rejected submission spends no provider budget, starts no orchestration — but leaves evidence of what arrived. That is the deal: refuse loudly, keep the record.",
+      e:"HTTP 422 to the caller; the case strip shows failed only to mark where the journey ended — no case row was ever opened.",
+      d:[["budget","zero FCT calls spent"],["evidence","staging retains what arrived"]] },
+  ] },
+};
+
+/* ---------- engine ---------- */
+let beats = SCENARIOS.journey.beats, idx = 0, playing = false;
+
+async function fanout() {
+  const dots = [];
+  for (let i = 0; i < 5; i++) {
+    const d = document.createElement("div");
+    d.className = "dot"; d.textContent = "t" + (i + 1);
+    d.style.transform = dp("orch", 0, 26);
+    $("stage").appendChild(d); dots.push(d);
+  }
+  await wait(200);
+  for (let i = 0; i < 5; i++) {
+    const d = dots[i];
+    setTimeout(() => {
+      if (i === 3) d.classList.add("wait");
+      d.style.transform = dp("fct", 0, 34 + i * 2);
+    }, RM ? 0 : (i * 140) / speed);
+  }
+  await wait(900);
+  dots[3].classList.remove("wait");
+  dots[4].style.transform = dp("fct", 30, 20); // attempt-2: back off and retry
+  await wait(500);
+  for (let i = 0; i < 5; i++) setTimeout(() => { dots[i].style.transform = dp("presp", -20 + i * 10, 26); }, RM ? 0 : (i * 140) / speed);
+  await wait(900);
+  dots.forEach(d => d.remove());
+}
+
+async function dotsOnly() {
+  for (let i = 0; i < 3; i++) {
+    const d = document.createElement("div");
+    d.className = "dot"; d.textContent = "t" + (i + 1);
+    d.style.transform = dp("orch", 0, 26); $("stage").appendChild(d);
+    setTimeout(() => { d.style.transform = dp("fct", 0, 30); }, RM ? 0 : (i * 120) / speed);
+    setTimeout(() => { d.style.transform = dp("presp", 0, 26); }, RM ? 0 : (550 + i * 120) / speed);
+  }
+  await wait(1100);
+  document.querySelectorAll(".dot").forEach(d => d.remove());
+}
+
+async function ghostReplay() {
+  ghost.style.transform = pos("lmc", 0, -28); ghost.style.opacity = 1;
+  await wait(150);
+  ghost.style.transform = pos("ingestion", 0, -40);
+  await wait(700);
+  ghost.style.transform = pos("lmc", 0, -28);
+  showCallout("ingestion", "same fingerprint → <b>202 idempotent_replay</b><br>different payload, same id → <b>409 conflict</b>", "idempotency");
+  await wait(600);
+  ghost.style.opacity = 0;
+}
+
+function applyBeat(b, i) {
+  clearTransient();
+  if (b.seen) b.seen.forEach(s => caseSeen.add(s));
+  if (b.case) { setStrip("caseStrip", CASE_STATES, b.case); }
+  if (b.exch) { setStrip("exchStrip", EXCH_STATES, b.exch); }
+  if (b.move) packetAt = b.move;
+  packet.style.transform = pk(packetAt);
+  packet.className = b.refused ? "refused" : b.hold ? "held" : "";
+  lastHold = !!b.hold;
+  showTransient(b);
+  if (b.arte) b.arte.forEach(a => chip(a.node, a.name, a.kind, i));
+  active(b.node);
+  caption(b.title, document.body.dataset.eng ? (b.e || b.s) : b.s, b.d);
+  $("beatPos").textContent = `${i + 1} / ${beats.length}`;
+}
+
+async function runBeat(b, i) {
+  applyBeat(b, i);
+  if (b.ghost) await ghostReplay();
+  if (b.fanout) await fanout();
+  if (b.dots) await dotsOnly();
+  await wait(b.fanout ? 1600 : 1100);
+}
+
+function resetTo(i) {
+  document.querySelectorAll(".chip").forEach(c => { if (+c.dataset.beat >= i) c.remove(); });
+  clearTransient(); lastHold = false;
+  let at = "lmc", cs = null, es = null;
+  caseSeen.clear(); exchSeen.clear();
+  for (let j = 0; j < i; j++) {
+    const b = beats[j];
+    if (b.move) at = b.move;
+    if (b.case) { cs = b.case; caseSeen.add(cs); }
+    if (b.seen) b.seen.forEach(s => caseSeen.add(s));
+    if (b.exch) { es = b.exch; exchSeen.add(es); }
+  }
+  packetAt = at; packet.style.transform = pk(at); packet.className = "";
+  setStrip("caseStrip", CASE_STATES, cs); setStrip("exchStrip", EXCH_STATES, es || "not_started");
+  if (i > 0) {
+    const b = beats[i - 1];
+    lastHold = !!b.hold;
+    if (b.hold) packet.className = "held";
+    if (b.refused) packet.className = "refused";
+    showTransient(b);
+    active(b.node);
+    caption(b.title, document.body.dataset.eng ? (b.e || b.s) : b.s, b.d);
+  }
+  else { active(null); caption("Ready", "Press <b>▶ Play</b> — or step through with <b>›</b>. Toggle <b>Engineer detail</b> for the real container, queue, artefact and stage names at every beat.", []); }
+  $("beatPos").textContent = `${i} / ${beats.length}`;
+}
+
+async function play() {
+  if (playing) { playing = false; $("playBtn").textContent = "▶ Play"; return; }
+  if (idx >= beats.length) { resetTo(0); idx = 0; }
+  playing = true; $("playBtn").textContent = "⏸ Pause";
+  while (playing && idx < beats.length) {
+    const b = beats[idx]; idx++;
+    await runBeat(b, idx - 1);
+  }
+  playing = false; $("playBtn").textContent = idx >= beats.length ? "⟲ Replay" : "▶ Play";
+}
+
+function stepFwd() {
+  playing = false; $("playBtn").textContent = "▶ Play";
+  if (idx < beats.length) { applyBeat(beats[idx], idx); idx++; }
+  $("playBtn").textContent = idx >= beats.length ? "⟲ Replay" : "▶ Play";
+}
+function stepBack() {
+  playing = false; $("playBtn").textContent = "▶ Play";
+  if (idx === 0) return;
+  idx--; resetTo(idx);
+}
+
+function setScenario(name) {
+  playing = false; $("playBtn").textContent = "▶ Play";
+  beats = SCENARIOS[name].beats; idx = 0;
+  document.querySelectorAll(".chip").forEach(c => c.remove());
+  setStrip("exchStrip", EXCH_STATES, null);
+  resetTo(0);
+}
+
+/* ---------- controls ---------- */
+$("playBtn").onclick = play;
+$("fwdBtn").onclick = stepFwd;
+$("backBtn").onclick = stepBack;
+$("restartBtn").onclick = () => { playing = false; $("playBtn").textContent = "▶ Play"; idx = 0; resetTo(0); };
+$("scenario").onchange = e => setScenario(e.target.value);
+$("speed").onchange = e => { speed = +e.target.value; };
+$("engBtn").onclick = () => {
+  const on = !document.body.dataset.eng;
+  document.body.dataset.eng = on ? "1" : "";
+  $("engBtn").classList.toggle("on", on);
+  $("engBtn").setAttribute("aria-pressed", on);
+  $("narr").classList.toggle("eng", on);
+  if (idx > 0) { const b = beats[Math.max(idx - 1, 0)]; caption(b.title, on ? (b.e || b.s) : b.s, b.d); }
+};
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.code === "Space") { e.preventDefault(); play(); }
+  if (e.code === "ArrowRight") stepFwd();
+  if (e.code === "ArrowLeft") stepBack();
+  if (e.code === "KeyR") $("restartBtn").click();
+});
+
+/* ---------- fit ---------- */
+function fit() {
+  const vp = $("viewport"), s = $("stage");
+  const scale = vp.clientWidth / 1280;
+  s.style.transform = `scale(${scale})`;
+}
+addEventListener("resize", fit);
+
+buildStrip("caseStrip", CASE_STATES);
+buildStrip("exchStrip", EXCH_STATES);
+setStrip("exchStrip", EXCH_STATES, "not_started");
+drawWires();
+packet.style.transform = pk("lmc");
+fit();
+/* ?scenario=journey|held|refused picks a scenario; &to=N jumps to beat N;
+   &eng opens engineer detail; &play auto-plays — handy for recording. */
+const q = new URLSearchParams(location.search);
+if (SCENARIOS[q.get("scenario")]) {
+  $("scenario").value = q.get("scenario");
+  setScenario(q.get("scenario"));
+} else {
+  resetTo(0);
+}
+if (q.get("to")) {
+  const n = Math.max(0, Math.min(+q.get("to") || 0, beats.length));
+  packet.style.transition = "none";          // deep links land instantly, no fly-in
+  for (let j = idx; j < n; j++) applyBeat(beats[j], j);
+  void packet.offsetWidth;
+  packet.style.transition = "";
+  idx = n;
+}
+if (q.has("eng")) $("engBtn").click();
+if (q.has("play")) play();
+</script>
+</body>
+</html>
