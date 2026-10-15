@@ -10,6 +10,10 @@ Carbon Footprinting Orchestration Platform — built for stakeholders and new st
 `index.html` is the whole site — no build, no dependencies, no network requests.
 Double-click it, or serve the folder with any static file server.
 
+`non-happy-paths.html` is a companion page: what happens when a submission does
+not sail through — `held`, `completed_with_warnings`, `failed`, refused at the
+door, replays and conflicts — with deep links back into the animated scenarios.
+
 ## Using it
 
 - **▶ Play** / step with **›** / **‹** — **space** plays and pauses, **R** restarts.

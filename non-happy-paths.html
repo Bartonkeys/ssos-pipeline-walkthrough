@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<!--
+  SYNTHETIC / ILLUSTRATIVE — SSOS non-happy paths.
+  ============================================================================
+  A companion to index.html: what happens when a farm-year submission does not
+  sail through — held, completed_with_warnings, failed, refused at the door,
+  replays and conflicts. Everything depicted is synthetic. No real farm data,
+  no live calls; this file opens over file:// and makes no network requests.
+
+  SOURCE MAP — what each depicted element comes from:
+  ----------------------------------------------------------------------------
+  case states + transitions   apps/ssos_orchestrator_dotnet/src/Ssos.Domain/
+                              FootprintCase.cs, CaseLifecycle.cs
+  refusal shape               apps/ssos_orchestrator_dotnet/src/Ssos.Domain/
+                              StageResult.cs  (reason + blocker_owner, never an
+                              exception unless it is a transport fault)
+  response codes + statuses   apps/ssos_orchestrator_dotnet/src/Ssos.Intake/
+                              V1Api.cs, V1Contract.cs
+  external contract           docs/integration/ssos-ingestion-api.openapi.yaml
+  case-version semantics      apps/ssos_orchestrator_dotnet/src/Ssos.Domain/
+                              FootprintCase.cs  (CaseVersioning.CorrectCase)
+  ============================================================================
+-->
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSOS — off the happy path</title>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #131a23; --panel2: #182130; --line: #2c3949;
+    --text: #e7eef7; --dim: #93a3b5; --mono: "Cascadia Code", "Consolas", ui-monospace, monospace;
+    --teal: #2dd4bf; --amber: #f5a524; --green: #3ddc97; --blue: #5ea8ff;
+    --red: #f8736b; --violet: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(1200px 700px at 50% -10%, #14202e 0%, var(--bg) 60%);
+    color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+  }
+  header { width: 1080px; max-width: 94vw; display: flex; align-items: baseline; gap: 14px; padding: 18px 4px 10px; }
+  header h1 { font-size: 21px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  .navlink {
+    margin-left: auto; font: 600 12px var(--mono); color: var(--teal); text-decoration: none;
+    border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent); border-radius: 6px;
+    padding: 4px 10px; white-space: nowrap;
+  }
+  .navlink:hover { background: color-mix(in srgb, var(--teal) 12%, transparent); }
+  .badge {
+    font: 600 10.5px var(--mono); letter-spacing: .8px; white-space: nowrap;
+    color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+    border-radius: 4px; padding: 3px 8px; background: color-mix(in srgb, var(--amber) 8%, transparent);
+  }
+  /* ---- content ---- */
+  main { width: 1080px; max-width: 94vw; display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px; }
+  section.card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px;
+  }
+  section.card h2 {
+    margin: 0 0 4px; font: 700 12.5px var(--mono); letter-spacing: .7px; text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  section.card h2 .plain { font: 600 12.5px "Segoe UI", system-ui, sans-serif; text-transform: none; letter-spacing: 0; color: var(--dim); }
+  .h-amber { color: var(--amber); } .h-red { color: var(--red); } .h-teal { color: var(--teal); }
+  .h-green { color: var(--green); } .h-violet { color: var(--violet); } .h-blue { color: var(--blue); }
+  p { margin: 8px 0; }
+  p.dim, .dim { color: var(--dim); }
+  code { font-family: var(--mono); font-size: 12px; color: var(--blue); }
+  a { color: var(--teal); }
+  /* ---- lifecycle strip ---- */
+  .strip { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 8px 0 2px; }
+  .strip .lbl { font: 600 9.5px var(--mono); letter-spacing: .7px; color: var(--dim); text-transform: uppercase; margin-right: 6px; }
+  .pill {
+    font: 600 10px var(--mono); color: var(--dim); padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel2); white-space: nowrap;
+  }
+  .pill.path { color: var(--teal); border-color: color-mix(in srgb, var(--teal) 45%, transparent); }
+  .pill.good { color: var(--green); border-color: color-mix(in srgb, var(--green) 55%, transparent); }
+  .pill.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
+  .pill.bad  { color: var(--red);   border-color: color-mix(in srgb, var(--red) 55%, transparent); }
+  .pill.arrow { border: none; background: none; color: var(--line); padding: 0 1px; }
+  /* ---- two-column flavour cards ---- */
+  .flavours { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
+  @media (max-width: 800px) { .flavours { grid-template-columns: 1fr; } }
+  .flavour {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+  }
+  .flavour h3 { margin: 0 0 4px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .owner {
+    font: 600 9.5px var(--mono); padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .owner.lmc { color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 50%, transparent); }
+  .owner.ss  { color: var(--violet); border: 1px solid color-mix(in srgb, var(--violet) 50%, transparent); }
+  /* ---- response table ---- */
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font: 600 10px var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--dim); }
+  td { font-size: 13px; }
+  td.code { font: 600 11px var(--mono); color: var(--blue); white-space: nowrap; }
+  td.code.none { color: var(--line); }
+  .status {
+    font: 700 11px var(--mono); padding: 2px 8px; border-radius: 4px; white-space: nowrap; display: inline-block;
+  }
+  .s2xx { color: var(--teal); border: 1px solid color-mix(in srgb, var(--teal) 50%, transparent); }
+  .s409 { color: var(--violet); border: 1px solid color-mix(in srgb, var(--violet) 50%, transparent); }
+  .s4xx { color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 50%, transparent); }
+  .s5xx { color: var(--red);   border: 1px solid color-mix(in srgb, var(--red) 50%, transparent); }
+  /* ---- detail chips ---- */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+  .chip {
+    font: 600 10px var(--mono); color: var(--blue); white-space: nowrap;
+    background: color-mix(in srgb, var(--panel2) 88%, var(--blue) 12%);
+    border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+    border-radius: 4px; padding: 3px 8px;
+  }
+  .callout {
+    border-left: 3px solid var(--teal); background: color-mix(in srgb, var(--teal) 6%, transparent);
+    padding: 8px 12px; border-radius: 0 8px 8px 0; margin: 10px 0 2px; font-size: 13px;
+  }
+  ul { margin: 8px 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  footer { color: var(--dim); font-size: 11px; padding: 12px 4px 20px; width: 1080px; max-width: 94vw; }
+  footer code { font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Off the happy path</h1>
+  <span class="sub">SSOS — Sans Souci Carbon Footprinting Orchestration</span>
+  <a class="navlink" href="index.html">← the life of a submission</a>
+  <span class="badge">SYNTHETIC · ILLUSTRATIVE</span>
+</header>
+
+<main>
+
+<section class="card">
+  <h2 class="h-teal">Where a case can land <span class="plain">— the lifecycle, with the non-happy exits marked</span></h2>
+  <p class="dim">A submission moves left to right. Two states are reachable from <em>anywhere</em>:
+  <code>held</code> (waits on a person or the operator posture) and <code>failed</code> (the pipeline could not finish).
+  Two more close the case at the end: <code>completed</code> and <code>completed_with_warnings</code>.</p>
+  <div class="strip"><span class="lbl">the walk</span>
+    <span class="pill path">accepted</span><span class="pill arrow">→</span>
+    <span class="pill path">canonicalising</span><span class="pill arrow">→</span>
+    <span class="pill path">validating_readiness</span><span class="pill arrow">→</span>
+    <span class="pill path">planning</span><span class="pill arrow">→</span>
+    <span class="pill path">calculating</span><span class="pill arrow">→</span>
+    <span class="pill path">reconciling</span><span class="pill arrow">→</span>
+    <span class="pill path">calculated</span><span class="pill arrow">→</span>
+    <span class="pill path">generating_output</span>
+  </div>
+  <div class="strip"><span class="lbl">the landings</span>
+    <span class="pill good">completed — outputs released</span>
+    <span class="pill warn">completed_with_warnings — outputs + approved findings</span>
+    <span class="pill warn">held — waits on a person</span>
+    <span class="pill bad">failed — terminal, nothing released</span>
+  </div>
+  <p class="dim">Every landing is a <em>named state</em> carrying a <code>reason</code> and a
+  <code>blocker_owner</code> — never a stack trace, unless the failure is a genuine transport fault.</p>
+</section>
+
+<section class="card">
+  <h2 class="h-amber">Held <span class="plain">— waiting on a person, not a retry</span></h2>
+  <p>A hold is a named refusal: the pipeline stopped at a specific stage for a specific reason, and
+  wrote down who can clear it. The case row shows <code>held</code> and it lands on the operator's
+  attention list (<code>GET /ops/cases/attention</code>) with its reason and findings.</p>
+  <div class="flavours">
+    <div class="flavour">
+      <h3>Data problem <span class="owner lmc">blocker_owner: LMC</span></h3>
+      <p>Something in the payload can't be prepared: an unmapped code, a missing field, an identifier
+      that isn't a GUID. LMC fixes the dataset and resubmits <em>under a new submission id</em> —
+      the new trigger is adopted onto the same case, which is re-assessed where it held:</p>
+      <ul>
+        <li><b>fixed</b> → it continues to the next stage;</li>
+        <li><b>still an issue</b> → it holds again — same reason, or a different one.</li>
+      </ul>
+      <p><a href="index.html?scenario=held&amp;eng">watch it in the walkthrough →</a></p>
+    </div>
+    <div class="flavour">
+      <h3>Posture problem <span class="owner ss">blocker_owner: SANS_SOUCI</span></h3>
+      <p>Nothing is wrong with the payload — the estate's control gate is paused. The case waits at
+      the gate before the next irreversible step (dispatch, render or release): no calculator calls
+      are spent, nothing is released, and when the posture flips the case resumes at that gate.</p>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip">state: held</span>
+    <span class="chip">reason: &lt;named refusal&gt;</span>
+    <span class="chip">blocker_owner: LMC | SANS_SOUCI</span>
+    <span class="chip">ops/cases/attention</span>
+  </div>
+</section>
+
+<section class="card">
+  <h2 class="h-amber">Completed with warnings <span class="plain">— done, and flagged</span></h2>
+  <p>The pipeline finished and the output pack was released — but not everything was clean.
+  <code>completed_with_warnings</code> is still a deliverable state: <code>GET /results</code>
+  answers <b>200</b> with the artefacts <em>plus</em> a <code>warnings</code> array of approved,
+  non-blocking findings.</p>
+  <p class="dim">Typical warning: a final provider reply that was not a success. It is recorded in
+  the evidence — not retried forever, and not severe enough to hold the case — and it rides along
+  with the outputs so a reviewer can see exactly what was imperfect.</p>
+  <div class="chips">
+    <span class="chip">terminal + deliverable</span>
+    <span class="chip">GET /results → 200 + warnings[]</span>
+  </div>
+</section>
+
+<section class="card">
+  <h2 class="h-red">Failed <span class="plain">— terminal; nothing was released</span></h2>
+  <p>A refusal with no human blocker: the pipeline could not complete. No output pack exists for
+  DAERA — the failure is recorded on the case and in the operational journal, and it appears on
+  the attention list.</p>
+  <p><b>Recovery is a correction, not a rerun.</b> The failed version stays exactly as it was —
+  it is the immutable record of what happened. A further submission under a new
+  <code>submission_id</code> opens a <em>new version</em> of the farm-year's case: linked to its
+  predecessor by <code>supersedes</code> / <code>superseded_by</code>, rendering its outputs under
+  <code>v{n}/</code> artefact paths so nothing written before is overwritten.</p>
+  <div class="callout">"A corrected farm-year submission creates a new immutable case version;
+  it does not overwrite released evidence." — the published contract.</div>
+  <div class="chips">
+    <span class="chip">state: failed</span>
+    <span class="chip">terminal</span>
+    <span class="chip">supersedes → v1</span>
+    <span class="chip">superseded_by ← v2</span>
+    <span class="chip">{case}/v{n}/…</span>
+  </div>
+</section>
+
+<section class="card">
+  <h2 class="h-violet">Refused at the door <span class="plain">— synchronous; no case was opened</span></h2>
+  <p>These answers come back from <code>POST /api/v1/sanssouci/carbonfootprints</code> itself —
+  before any orchestration exists. Success is always <b>202</b> (accepted for async processing),
+  never 200.</p>
+  <table>
+    <thead><tr><th>status</th><th>scenario</th><th>code</th><th>what to do</th></tr></thead>
+    <tbody>
+      <tr><td><span class="status s4xx">400</span></td>
+          <td>The body isn't valid JSON.</td>
+          <td class="code">SSOS-SCHEMA-000</td>
+          <td>Fix the body and resubmit.</td></tr>
+      <tr><td><span class="status s4xx">401</span></td>
+          <td>The auth posture refuses by default (<code>deny_all</code>).</td>
+          <td class="code">SSOS-AUTH-001</td>
+          <td>Sort out credentials / posture, then retry.</td></tr>
+      <tr><td><span class="status s409">409</span></td>
+          <td><code>submission_id</code> reused with a <em>different</em> payload — two bodies claiming one identity.</td>
+          <td class="code">SSOS-IDEM-002</td>
+          <td>Replay the original bytes, or submit under a new id.</td></tr>
+      <tr><td><span class="status s409">409</span></td>
+          <td>The stored evidence already holds different bytes for this identity, and no case exists to adjudicate.</td>
+          <td class="code">SSOS-EVIDENCE-001</td>
+          <td>Reconcile which body is authoritative; resubmit with the right identity.</td></tr>
+      <tr><td><span class="status s409">409</span></td>
+          <td>The case write was refused and no surviving record can be found (a pathological race).</td>
+          <td class="code">SSOS-IDEM-003</td>
+          <td>Resubmit; escalate if it repeats.</td></tr>
+      <tr><td><span class="status s4xx">422</span></td>
+          <td>A prohibited identity field is present (e.g. a postcode). Paths only — nothing is stored.</td>
+          <td class="code">SSOS-IDENTITY-001</td>
+          <td>Remove the field and resubmit.</td></tr>
+      <tr><td><span class="status s4xx">422</span></td>
+          <td>Contract validation failed. The staged evidence is kept, but no trigger is written and nothing runs.</td>
+          <td class="code">SSOS-SCHEMA-*</td>
+          <td>Fix the findings and resubmit.</td></tr>
+      <tr><td><span class="status s5xx">500</span></td>
+          <td>A genuine transport fault mid-write — storage or SQL unreachable.</td>
+          <td class="code none">—</td>
+          <td>Retry; nothing was falsely accepted.</td></tr>
+      <tr><td><span class="status s5xx">503</span></td>
+          <td>The app couldn't build persistence at startup — every route reports it.</td>
+          <td class="code none">—</td>
+          <td>Platform-side; check <code>GET /health</code>.</td></tr>
+    </tbody>
+  </table>
+  <p><a href="index.html?scenario=refused&amp;eng">watch a 422 in the walkthrough →</a></p>
+</section>
+
+<section class="card">
+  <h2 class="h-green">Replays &amp; retries <span class="plain">— safe by construction</span></h2>
+  <ul>
+    <li><b>Same submission id + same logical payload</b> → <b>202</b> with
+      <code>idempotent_replay: true</code>. Nothing is re-staged, no trigger blob is written, no
+      orchestration starts, no second FCT call is spent — the response just hands back the original
+      <code>carbon_footprint_id</code>.</li>
+    <li><b>Same submission id + different payload</b> → <b>409</b>. That is a different submission
+      claiming an identity that already has evidence — refused, never overwritten.</li>
+    <li><b>New submission id, same farm-year</b> → the case it belongs to decides: a live
+      (non-terminal) case is adopted and re-assessed; a terminal case opens a new version.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2 class="h-blue">Who owns the blocker</h2>
+  <table>
+    <thead><tr><th>blocker_owner</th><th>owns it because</th><th>typical reasons</th></tr></thead>
+    <tbody>
+      <tr><td><span class="owner lmc">LMC</span></td>
+          <td>It came from the source data.</td>
+          <td>Unmapped code · missing field · malformed identifier · contract findings</td></tr>
+      <tr><td><span class="owner ss">SANS_SOUCI</span></td>
+          <td>It's platform-side.</td>
+          <td>Paused estate posture · missing crosswalk · infrastructure disposition</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+
+<footer>
+  Companion to <a href="index.html">index.html</a> — every state, code and container name on this
+  page is a real constant from the platform's code (source map in this file's header comment).
+  All data is synthetic.
+</footer>
+
+</body>
+</html>

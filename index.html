@@ -54,6 +54,12 @@
     color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
     border-radius: 4px; padding: 3px 8px; background: color-mix(in srgb, var(--amber) 8%, transparent);
   }
+  .navlink {
+    font: 600 12px var(--mono); color: var(--teal); text-decoration: none;
+    border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent); border-radius: 6px;
+    padding: 3px 10px; white-space: nowrap;
+  }
+  .navlink:hover { background: color-mix(in srgb, var(--teal) 12%, transparent); }
   /* ---- controls ---- */
   .controls {
     width: 1280px; max-width: 96vw; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -201,6 +207,7 @@
 <header>
   <h1>The life of a submission</h1>
   <span class="sub">SSOS — Sans Souci Carbon Footprinting Orchestration</span>
+  <a class="navlink" href="non-happy-paths.html">off the happy path →</a>
   <span class="badge">SYNTHETIC · ILLUSTRATIVE</span>
 </header>
 
