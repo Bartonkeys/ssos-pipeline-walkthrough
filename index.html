@@ -16,8 +16,8 @@
   stage names + orchestration order apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
                                     Orchestration.cs, PipelineExtensions.cs, Constants/StageNames.cs
   stage behaviour                   apps/ssos_orchestrator_dotnet/src/Ssos.Pipeline/Stages.*.cs
-  fan-out mechanics                 apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
-                                    FanOutDispatcher.cs  +  src/Ssos.Domain/FanOut.cs
+  batch dispatch mechanics          apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
+                                    BatchDispatcher.cs  +  src/Ssos.Domain/BatchDispatch.cs
   container + queue + marker names  apps/ssos_orchestrator_dotnet/src/Ssos.Domain/ResourceNames.cs
   case + exchange states            apps/ssos_orchestrator_dotnet/src/Ssos.Domain/CaseLifecycle.cs,
                                     FootprintCase.cs
@@ -207,8 +207,8 @@
 <header>
   <h1>The life of a submission</h1>
   <span class="sub">SSOS — Sans Souci Carbon Footprinting Orchestration</span>
-  <a class="navlink" href="non-happy-paths.html">off the happy path →</a>
   <span class="badge">SYNTHETIC · ILLUSTRATIVE</span>
+  <a class="navlink" href="non-happy-paths.html">off the happy path →</a>
 </header>
 
 <div class="controls" role="toolbar" aria-label="walkthrough controls">
@@ -261,8 +261,8 @@
   <div class="node db"   id="n-sql" style="left:680px;top:225px"><span class="t">ssos.* · Azure SQL</span><span class="s">case, dataset, ledger,<br>artefact metadata</span><div class="tray" id="tray-sql"></div></div>
   <div class="node store" id="n-canonical" style="left:862px;top:225px"><span class="t">ssos-canonical</span><span class="s">{year}/{guid}/{case}/</span><div class="tray" id="tray-canonical"></div></div>
   <div class="node store" id="n-preq" style="left:680px;top:335px"><span class="t">ssos-provider-requests</span><span class="s">plan + request bodies</span><div class="tray" id="tray-preq"></div></div>
-  <div class="node store" id="n-presp" style="left:862px;top:328px"><span class="t">ssos-provider-responses</span><span class="s">replies + aggregate</span><div class="tray" id="tray-presp"></div></div>
-  <div class="node store" id="n-mapping" style="left:680px;top:445px"><span class="t">ssos-mapping-rules</span><span class="s">approved crosswalks · read only</span></div>
+  <div class="node store" id="n-presp" style="left:862px;top:328px"><span class="t">ssos-provider-responses</span><span class="s">per-task exchanges + batch replies</span><div class="tray" id="tray-presp"></div></div>
+  <div class="node store" id="n-mapping" style="left:680px;top:445px"><span class="t">ssos-mapping-rules</span><span class="s">compiled contract bundle · read only</span></div>
   <div class="node store" id="n-draft" style="left:862px;top:445px"><span class="t">ssos-output-draft-packages</span><span class="s">result + model + pdf</span><div class="tray" id="tray-draft"></div></div>
 
   <div class="node host" id="n-renderer" style="left:1037px;top:90px;width:150px"><span class="t">PDF renderer</span><span class="s">Python · Playwright container</span></div>
@@ -306,15 +306,16 @@
 {
   "scenarios": ["journey", "held", "refused"],
   "stages": ["intake", "inventory", "canonicalise", "check_control", "plan",
-             "dispatch", "dispatch_task", "collect_responses", "build_outputs",
-             "render", "render_pdf", "release", "orchestration", "exchange"],
+             "dispatch", "dispatch_batch",
+             "build_outputs", "render", "render_pdf", "release", "orchestration"],
   "containers": ["ssos-submission-staging", "ssos-raw-submissions", "ssos-validation-rules",
                  "ssos-canonical", "ssos-provider-requests", "ssos-provider-responses",
                  "ssos-mapping-rules", "ssos-output-draft-packages", "ssos-output-packages"],
   "queues": ["ssos-submission", "ssos-exchange"],
-  "artefacts": ["submission.json", "canonical.json", "request-plan.json",
-                "requests/{task}.json", "replies/{task}.json", "replies/{task}.attempt-N.json",
-                "provider-responses.json", "result.json", "report-model.json",
+  "artefacts": ["submission.json", "contract.json", "request-plan.json",
+                "batches/{key}.request.json", "batches/{key}.attempt-N.json",
+                "exchanges/{taskId}.attempt-N.json",
+                "result.json", "report-model.json",
                 "footprint.pdf", "manifest.json"],
   "controlActions": ["dispatch_fct", "render_report", "release"],
   "caseStates": ["accepted", "canonicalising", "validating_readiness", "held", "planning",
@@ -488,8 +489,8 @@ function caption(title, body, detail) {
    hold    — {reason,owner} hold banner + amber packet
    resume  — clears a previous hold
    ghost   — replay dashed packet
-   fanout  — run the dispatch fan-out sequence
-   dots    — quick fan-out sketch for the compressed scenario
+   batch   — run the batch dispatch sequence
+   dots    — quick dispatch sketch for the compressed scenario
 */
 const INTAKE = [
   { move:"ingestion", node:"ingestion", case:"accepted", title:"A farm year arrives",
@@ -527,30 +528,30 @@ const MID = [
     s:"Inventory reads the submission's identity — a farm GUID, the footprint year, the submission id — and opens a case. The platform never learns a farm's name or address.",
     e:"inventory: subject.guid + footprint_year + submission_id → find or open ssos.footprint_case. Missing identity or a terminal existing case → refusal owned by LMC.",
     d:[["stage","inventory"],["state","accepted → canonicalising"],["file","Ssos.Pipeline/Stages.Inventory.cs"]] },
-  { move:"canonical", node:"canonical", arte:[{node:"canonical",name:"canonical.json"}], case:"validating_readiness", title:"Canonicalise + readiness",
-    s:"The farm's data is canonicalised against approved crosswalks — controlled codes resolved explicitly, never approximated — then assessed: is there enough here to plan a calculation?",
-    e:"canonicalise: CanonicalisationEngine + ICodeCrosswalk → canonical.json under {year}/{guid}/{case}/; Readiness.AssessReadiness gates planning; the farm dataset + exceptions persist to ssos.* either way.",
-    d:[["stage","canonicalise"],["artefact","canonical.json → ssos-canonical"],["gates","crosswalk absent → refuse (SANS_SOUCI) · readiness → hold (LMC)"],["file","Stages.Canonicalise.cs + Readiness.cs"]] },
+  { move:"canonical", node:"canonical", arte:[{node:"canonical",name:"contract.json"}], case:"validating_readiness", title:"Contract mapping + readiness",
+    s:"The farm's data is mapped against the compiled contract bundle — controlled codes resolved by approved translations, never approximated — then assessed: is there enough here to plan a calculation?",
+    e:"canonicalise (pinned stage label): ContractMapping + the contract bundle → contract.json under {year}/{guid}/{case}/; Readiness.AssessReadiness gates planning; the farm dataset + exceptions persist to ssos.* either way.",
+    d:[["stage","canonicalise"],["artefact","contract.json → ssos-canonical"],["gates","translation absent → refuse (SANS_SOUCI) · readiness → hold (LMC)"],["file","Stages.ContractMapping.cs + Readiness.cs"]] },
   { node:"orch", gate:"dispatch_fct", case:"planning", title:"Control gate — spending calls",
     s:"Before anything irreversible, the orchestration asks the operator's control gate. Calling the calculator spends a shared estate budget — a posture switch can stop it here.",
     e:"check_control: ControlGate.ControlPermits(\"dispatch_fct\") — the estate posture is read before the irreversible step; a refused gate holds the case.",
     d:[["stage","check_control"],["action","dispatch_fct"],["file","Stages.Control.cs + ControlGate.cs"]] },
   { move:"preq", node:"preq", arte:[{node:"preq",name:"request-plan.json"}], case:"planning", title:"Plan every call",
-    s:"A plan names every calculator call this farm needs — derived from the canonical data and routing rules — and the whole task list is registered in a ledger before the first call goes out.",
+    s:"A plan names every calculator call this farm needs — derived from the contract data and the bundle's record wiring — and the whole task list is registered in a ledger before the first call goes out.",
     e:"plan: Derivation.DeriveTaskSpecifications + routing rules → request-plan.json (PLAN-{case}) → ssos-provider-requests; IDispatchLedger.RecordPlannedAsync registers every task + fingerprint.",
     d:[["stage","plan"],["artefact","request-plan.json"],["ledger","planned population known before call #1"],["file","Stages.Plan.cs + Derivation.cs + Planning.cs"]] },
 ];
 
 const DISPATCH = [
-  { node:"orch", fanout:true, case:"calculating", title:"Dispatch — fan-out five at a time",
-    arte:[{node:"preq",name:"requests/{task}.json ×5"},{node:"presp",name:"replies/{task}.json ×5"},{node:"presp",name:"replies/{task}.attempt-2.json",kind:"warn"}],
-    s:"The plan fans out — five tasks at a time, in parallel rounds. Every request body is stored before its permit is spent, the whole estate shares one calculator at five calls a second, and a throttled task waits on a durable timer rather than spinning.",
-    e:"dispatch_task per task: control permit → ledger check (a replayed answer suppresses the call) → store requests/{task}.json → take permit → call FCT → write replies/{task}.json. Retryable → replies/{task}.attempt-N.json + next attempt; throttled → re-offered after a timer (≤20 rounds).",
-    d:[["stage","dispatch_task · FctBurst = 5"],["limiter","5 req/s estate-wide — every call is a production action"],["artefacts","requests/{task}.json · replies/{task}.json · replies/{task}.attempt-N.json"],["file","Stages.Dispatch.cs + FanOut.cs + FanOutDispatcher.cs"]] },
-  { move:"presp", node:"presp", arte:[{node:"presp",name:"provider-responses.json"}], case:"reconciling", title:"Collect every reply",
-    s:"Replies are gathered into one record — written whether or not the fan-out finished, because a partial set is still the only record of the calls that were made.",
-    e:"collect_responses → provider-responses.json → ssos-provider-responses: per task — status, exchange flag, request + reply references, body.",
-    d:[["stage","collect_responses"],["artefact","provider-responses.json"],["file","Stages.Dispatch.cs → CollectResponsesStageAsync"]] },
+  { node:"orch", batch:true, case:"calculating", title:"Dispatch — one batch call",
+    arte:[{node:"preq",name:"batches/{key}.request.json"},{node:"presp",name:"batches/{key}.attempt-1.json"},{node:"presp",name:"exchanges/{taskId}.attempt-N.json ×N"}],
+    s:"The plan dispatches as one batch call per ≤1,000 items — the literal batch body is stored before the permit is spent, the whole estate shares one calculator budget, and a throttled call waits on a durable timer rather than spinning. Batch is the only dispatch path.",
+    e:"dispatch_batch: control permit → ledger check (a replayed answer suppresses the call) → store batches/{key}.request.json → take permit → call calculation/batch → store batches/{key}.attempt-N.json + one exchanges/{taskId}.attempt-N.json per task — each carrying the item sent, the answer, and the batch it rode in. Item errors and whole-request 422 → hold; retryable → re-offered after a timer (≤20 rounds).",
+    d:[["stage","dispatch_batch · ≤1,000 items a call"],["limiter","one permit per call — a plan of N tasks costs ⌈N/1,000⌉ requests"],["artefacts","batches/{key}.request.json · batches/{key}.attempt-N.json · exchanges/{taskId}.attempt-N.json"],["mode","none to pick — batch is the only path"],["file","Stages.DispatchBatch.cs + BatchRun.cs · BatchDispatcher.cs + BatchEvidence.cs"]] },
+  { move:"presp", node:"presp", arte:[{node:"presp",name:"exchanges/{taskId}.attempt-N.json"}], case:"reconciling", title:"Every task leaves one exchange record",
+    s:"Each task's exchange is already a single document — the item sent and the answer together, attempt-qualified so a retry never overwrites recorded evidence. There is no roll-up artefact and no collect stage: build_outputs reconciles by reading the exchange records.",
+    e:"exchanges/{taskId}.attempt-N.json → ssos-provider-responses: per task — status, exchange flag, request item, reply body, and references to the batch documents it rode in.",
+    d:[["evidence","one document per task per attempt"],["read by","build_outputs → Arrival.ReconcileArrivals"],["file","BatchEvidence.cs → StoreItemExchangeAsync"]] },
 ];
 
 const OUT = [
@@ -598,18 +599,18 @@ const EXCHANGE = [
 const HELD_TAIL = [
   { move:"orch", node:"canonical", hold:{reason:"Calculation readiness could not be established.", owner:"LMC"}, case:"held",
     seen:["validating_readiness"],
-    arte:[{node:"canonical",name:"canonical.json"},{node:"sql",name:"dataset + exceptions"}], title:"Held — not failed",
-    s:"Readiness could not be established — maybe a required field is missing or unmapped. The case holds with a named owner; its canonical record, farm dataset and every exception are already persisted for the reviewer.",
+    arte:[{node:"canonical",name:"contract.json"},{node:"sql",name:"dataset + exceptions"}], title:"Held — not failed",
+    s:"Readiness could not be established — maybe a required field is missing or unmapped. The case holds with a named owner; its contract record, farm dataset and every exception are already persisted for the reviewer.",
     e:"canonicalise → Readiness.AssessReadiness: MayPlan false → held, blocker_owner LMC. Evidence persists regardless — a held submission is exactly the population the review queue exists for.",
     d:[["stage","canonicalise"],["state","validating_readiness → held"],["owner","LMC"],["file","Stages.Canonicalise.cs + Readiness.cs"]] },
   { resume:true, node:"orch", case:"planning", title:"Resumed where it held",
     s:"Once the blocker is dispositioned — LMC supplies the missing data — the case resumes where it was held. Nothing is replayed from the start; every stage's artefacts already exist under the case prefix.",
     e:"held → planning is a declared transition; replayed stages overwrite the same case-derived keys, so resume is idempotent by construction.",
     d:[["transition","held → planning (declared)"],["file","CaseLifecycle.cs"]] },
-  { node:"orch", dots:true, arte:[{node:"preq",name:"request-plan.json"},{node:"presp",name:"provider-responses.json"}], case:"calculating", title:"Plan, dispatch, collect — as before",
-    s:"From here the journey is identical: plan, fan-out, collect — five at a time under the same 5-calls-a-second budget.",
-    e:"plan → dispatch_task (FctBurst 5) → collect_responses — see the journey scenario for the full mechanics.",
-    d:[["stages","plan · dispatch_task · collect_responses"]] },
+  { node:"orch", dots:true, arte:[{node:"preq",name:"request-plan.json"},{node:"presp",name:"exchanges/{taskId}.attempt-N.json"}], case:"calculating", title:"Plan, dispatch — as before",
+    s:"From here the journey is identical: plan, batch dispatch — the same calculator budget, one call per ≤1,000 items, one exchange record per task.",
+    e:"plan → dispatch_batch — see the journey scenario for the full mechanics.",
+    d:[["stages","plan · dispatch_batch"]] },
   { move:"outp", node:"outp", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"},{node:"draft",name:"footprint.pdf"},{node:"outp",name:"result.json"},{node:"outp",name:"report-model.json"},{node:"outp",name:"footprint.pdf"},{node:"outp",name:"manifest.json",kind:"last"}], case:"completed", title:"Outputs, render, release",
     s:"Reconciliation, report model, PDF, release — manifest.json written last into the watched container.",
     e:"build_outputs → render_pdf → release — manifest.json is the commit marker into ssos-output-packages.",
@@ -629,7 +630,7 @@ const SCENARIOS = {
              ...HELD_TAIL] },
   refused: { beats: [
     { move:"ingestion", node:"ingestion", case:"accepted", title:"A submission that isn't",
-      s:"LMC posts a payload — but this one is missing the footprint year, and the species code isn't in any approved crosswalk.",
+      s:"LMC posts a payload — but this one is missing the footprint year, and the species code isn't in any approved translation.",
       e:"POST /api/v1/sanssouci/carbonfootprints — the body parses, the contract doesn't pass.",
       d:[["endpoint","POST /api/v1/sanssouci/carbonfootprints"]] },
     { move:"staging", node:"staging", arte:[{node:"staging",name:"payload parts"}], case:"accepted", title:"Evidence still lands",
@@ -650,38 +651,42 @@ const SCENARIOS = {
 /* ---------- engine ---------- */
 let beats = SCENARIOS.journey.beats, idx = 0, playing = false;
 
-async function fanout() {
+async function batchRun() {
+  // one call carries the chunk — orch → fct — and the per-task replies split back.
+  const b = document.createElement("div");
+  b.className = "dot"; b.textContent = "b1";
+  b.style.transform = dp("orch", 0, 26);
+  $("stage").appendChild(b);
+  await wait(300);
+  b.classList.add("wait");                 // a permit wait holds the call, not a loop
+  await wait(500);
+  b.classList.remove("wait");
+  b.style.transform = dp("fct", 0, 34);
+  await wait(900);
   const dots = [];
   for (let i = 0; i < 5; i++) {
-    const d = document.createElement("div");
-    d.className = "dot"; d.textContent = "t" + (i + 1);
-    d.style.transform = dp("orch", 0, 26);
-    $("stage").appendChild(d); dots.push(d);
+    const r = document.createElement("div");
+    r.className = "dot"; r.textContent = "t" + (i + 1);
+    r.style.transform = dp("fct", 0, 34 + i * 2);
+    $("stage").appendChild(r); dots.push(r);
   }
-  await wait(200);
-  for (let i = 0; i < 5; i++) {
-    const d = dots[i];
-    setTimeout(() => {
-      if (i === 3) d.classList.add("wait");
-      d.style.transform = dp("fct", 0, 34 + i * 2);
-    }, RM ? 0 : (i * 140) / speed);
-  }
-  await wait(900);
-  dots[3].classList.remove("wait");
-  dots[4].style.transform = dp("fct", 30, 20); // attempt-2: back off and retry
-  await wait(500);
+  await wait(150); b.remove();
   for (let i = 0; i < 5; i++) setTimeout(() => { dots[i].style.transform = dp("presp", -20 + i * 10, 26); }, RM ? 0 : (i * 140) / speed);
   await wait(900);
   dots.forEach(d => d.remove());
 }
 
 async function dotsOnly() {
+  const b = document.createElement("div");
+  b.className = "dot"; b.textContent = "b1";
+  b.style.transform = dp("orch", 0, 26); $("stage").appendChild(b);
+  setTimeout(() => { b.style.transform = dp("fct", 0, 30); }, RM ? 0 : 120 / speed);
+  await wait(550); b.remove();
   for (let i = 0; i < 3; i++) {
     const d = document.createElement("div");
     d.className = "dot"; d.textContent = "t" + (i + 1);
-    d.style.transform = dp("orch", 0, 26); $("stage").appendChild(d);
-    setTimeout(() => { d.style.transform = dp("fct", 0, 30); }, RM ? 0 : (i * 120) / speed);
-    setTimeout(() => { d.style.transform = dp("presp", 0, 26); }, RM ? 0 : (550 + i * 120) / speed);
+    d.style.transform = dp("fct", 0, 30); $("stage").appendChild(d);
+    setTimeout(() => { d.style.transform = dp("presp", 0, 26); }, RM ? 0 : (i * 120) / speed);
   }
   await wait(1100);
   document.querySelectorAll(".dot").forEach(d => d.remove());
@@ -717,9 +722,9 @@ function applyBeat(b, i) {
 async function runBeat(b, i) {
   applyBeat(b, i);
   if (b.ghost) await ghostReplay();
-  if (b.fanout) await fanout();
+  if (b.batch) await batchRun();
   if (b.dots) await dotsOnly();
-  await wait(b.fanout ? 1600 : 1100);
+  await wait(b.batch ? 1600 : 1100);
 }
 
 function resetTo(i) {
