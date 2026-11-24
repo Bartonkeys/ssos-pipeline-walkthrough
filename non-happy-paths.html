@@ -147,7 +147,7 @@
     <span class="pill path">validating_readiness</span><span class="pill arrow">→</span>
     <span class="pill path">planning</span><span class="pill arrow">→</span>
     <span class="pill path">calculating</span><span class="pill arrow">→</span>
-    <span class="pill path">reconciling</span><span class="pill arrow">→</span>
+    <span class="pill path" style="opacity:.55;border-style:dashed" title="published waypoint — build_outputs reconciles inline and goes straight to calculated">(reconciling)</span><span class="pill arrow">→</span>
     <span class="pill path">calculated</span><span class="pill arrow">→</span>
     <span class="pill path">generating_output</span>
   </div>
@@ -157,6 +157,9 @@
     <span class="pill warn">held — waits on a person</span>
     <span class="pill bad">failed — terminal, nothing released</span>
   </div>
+  <p class="dim"><code>(reconciling)</code> is a published waypoint: <code>build_outputs</code> reconciles
+  inline and moves the case from <code>calculating</code> straight to <code>calculated</code>, so you will not
+  normally see it on <code>/status</code>.</p>
   <p class="dim">Every landing is a <em>named state</em> carrying a <code>reason</code> and a
   <code>blocker_owner</code> — never a stack trace, unless the failure is a genuine transport fault.</p>
 </section>
@@ -170,11 +173,14 @@
     <div class="flavour">
       <h3>Data problem <span class="owner lmc">blocker_owner: LMC</span></h3>
       <p>Something in the payload can't be prepared: an unmapped code, a missing field, an identifier
-      that isn't a GUID. LMC fixes the dataset and resubmits <em>under a new submission id</em> —
-      the new trigger is adopted onto the same case, which is re-assessed where it held:</p>
+      that isn't a GUID. <code>/status</code> answers with <code>errors[]</code> naming each finding and
+      what releases it. LMC — or an inspector, through capture's <em>correct and resubmit</em> — fixes
+      the dataset and resubmits <em>under a new submission id</em>. That opens a new version of the
+      farm-year's case, which supersedes the held one and runs from the start:</p>
       <ul>
-        <li><b>fixed</b> → it continues to the next stage;</li>
-        <li><b>still an issue</b> → it holds again — same reason, or a different one.</li>
+        <li><b>fixed</b> → the new version runs through to release;</li>
+        <li><b>still an issue</b> → the new version holds — same reason, or a different one;</li>
+        <li><b>the held version</b> stays exactly as it was, linked by <code>superseded_by</code>.</li>
       </ul>
       <p><a href="index.html?scenario=held&amp;eng">watch it in the walkthrough →</a></p>
     </div>
@@ -195,16 +201,22 @@
 
 <section class="card">
   <h2 class="h-amber">Completed with warnings <span class="plain">— done, and flagged</span></h2>
-  <p>The pipeline finished and the output pack was released — but not everything was clean.
-  <code>completed_with_warnings</code> is still a deliverable state: <code>GET /results</code>
-  answers <b>200</b> with the artefacts <em>plus</em> a <code>warnings</code> array of approved,
-  non-blocking findings.</p>
-  <p class="dim">Typical warning: a final provider reply that was not a success. It is recorded in
-  the evidence — not retried forever, and not severe enough to hold the case — and it rides along
-  with the outputs so a reviewer can see exactly what was imperfect.</p>
+  <p><code>completed_with_warnings</code> is a published, deliverable terminal state — the output pack
+  is released, but not everything was clean. Today's pipeline releases as <code>completed</code>, so you
+  will not see it yet; the flags show up in two other places instead.</p>
+  <ul>
+    <li><b>On <code>/status</code></b> — <code>GET …/{id}/status</code> carries a <code>warnings[]</code>
+      array: open farm-data exceptions (<code>SSOS-DATA-*</code>) that were routed to human review, each
+      saying what releases it. There is no separate results endpoint; the pack goes to DAERA.</li>
+    <li><b>In the report</b> — a figure the calculator did not supply is shown as <em>unavailable,
+      with the reason</em>, never as zero. If FCT's removals ever arrive positive (FCT reports them as
+      zero or negative), net emissions are withheld and the cover is flagged rather than computed
+      either way.</li>
+  </ul>
   <div class="chips">
     <span class="chip">terminal + deliverable</span>
-    <span class="chip">GET /results → 200 + warnings[]</span>
+    <span class="chip">GET /status → warnings[]</span>
+    <span class="chip">unavailable ≠ 0</span>
   </div>
 </section>
 
@@ -212,7 +224,8 @@
   <h2 class="h-red">Failed <span class="plain">— terminal; nothing was released</span></h2>
   <p>A refusal with no human blocker: the pipeline could not complete. No output pack exists for
   DAERA — the failure is recorded on the case and in the operational journal, and it appears on
-  the attention list.</p>
+  the attention list. <code>/status</code> reports it in <code>errors[]</code>
+  (<code>SSOS-FAIL-001</code> where no finer finding was recorded).</p>
   <p><b>Recovery is a correction, not a rerun.</b> The failed version stays exactly as it was —
   it is the immutable record of what happened. A further submission under a new
   <code>submission_id</code> opens a <em>new version</em> of the farm-year's case: linked to its
@@ -249,6 +262,14 @@
           <td><code>submission_id</code> reused with a <em>different</em> payload — two bodies claiming one identity.</td>
           <td class="code">SSOS-IDEM-002</td>
           <td>Replay the original bytes, or submit under a new id.</td></tr>
+      <tr><td><span class="status s409">409</span></td>
+          <td>A correction (new <code>submission_id</code>, same farm-year) arrived while the current version is still processing.</td>
+          <td class="code">SSOS-IDEM-004</td>
+          <td>Resubmit the same correction once the run reaches held, failed or completed.</td></tr>
+      <tr><td><span class="status s409">409</span></td>
+          <td>A competing correction superseded the same version first.</td>
+          <td class="code">SSOS-IDEM-005</td>
+          <td>Check <code>/status</code> for the current version and correct that one.</td></tr>
       <tr><td><span class="status s409">409</span></td>
           <td>The stored evidence already holds different bytes for this identity, and no case exists to adjudicate.</td>
           <td class="code">SSOS-EVIDENCE-001</td>
@@ -287,8 +308,10 @@
       <code>carbon_footprint_id</code>.</li>
     <li><b>Same submission id + different payload</b> → <b>409</b>. That is a different submission
       claiming an identity that already has evidence — refused, never overwritten.</li>
-    <li><b>New submission id, same farm-year</b> → the case it belongs to decides: a live
-      (non-terminal) case is adopted and re-assessed; a terminal case opens a new version.</li>
+    <li><b>New submission id, same farm-year, different payload</b> → a <em>correction</em>. If the
+      current version is at rest (held, failed or finished) it is superseded by a new version —
+      <b>202</b> with a new <code>carbon_footprint_id</code> and <code>supersedes</code> naming the old one.
+      If it is still processing → <b>409</b> <code>SSOS-IDEM-004</code>; try again once it settles.</li>
   </ul>
 </section>
 

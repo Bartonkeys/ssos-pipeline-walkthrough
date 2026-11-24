@@ -21,6 +21,13 @@
   container + queue + marker names  apps/ssos_orchestrator_dotnet/src/Ssos.Domain/ResourceNames.cs
   case + exchange states            apps/ssos_orchestrator_dotnet/src/Ssos.Domain/CaseLifecycle.cs,
                                     FootprintCase.cs
+  state each stage leaves a case in apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
+                                    CaseStatus.cs (StageState) - the case strip follows it
+  split-diet planning + report rows apps/ssos_orchestrator_dotnet/src/Ssos.Domain/DietPeriods.cs,
+                                    FctRequestBuilder.cs - ADR 0062
+  net emissions rule                apps/ssos_orchestrator_dotnet/src/Ssos.Domain/FarmCalculations.cs
+                                    (ResultAggregation.NetEmissions)
+  inspector capture (a caller)      apps/ssos_orchestrator_dotnet/CAPTURE_STATUS.md - ADR 0063
   control actions                   apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Orchestrator/
                                     Constants/ControlActions.cs
   exchange leg                      apps/ssos_orchestrator_dotnet/src/Ssos.Functions.Exchange/
@@ -316,7 +323,9 @@
                 "batches/{key}.request.json", "batches/{key}.attempt-N.json",
                 "exchanges/{taskId}.attempt-N.json",
                 "result.json", "report-model.json",
-                "footprint.pdf", "manifest.json"],
+                "footprint.pdf", "manifest.json",
+                "CFP_{year}_{guid}_{id}.pdf", "CFP_{year}_{guid}_{id}.raw.json",
+                "CFP_{year}_{guid}_{id}.result.json", "CFP_{year}_{guid}_{id}.manifest.json"],
   "controlActions": ["dispatch_fct", "render_report", "release"],
   "caseStates": ["accepted", "canonicalising", "validating_readiness", "held", "planning",
                  "calculating", "retrying", "reconciling", "calculated", "generating_output",
@@ -325,7 +334,7 @@
   "blockerOwners": ["LMC", "SANS_SOUCI"],
   "endpoints": ["POST /api/v1/sanssouci/carbonfootprints",
                 "GET /api/v1/sanssouci/carbonfootprints/{id}/status",
-                "GET /api/v1/sanssouci/carbonfootprints/{id}/results"],
+                "GET /health"],
   "commitMarkers": ["submission.json", "manifest.json"]
 }
 </script>
@@ -494,13 +503,13 @@ function caption(title, body, detail) {
 */
 const INTAKE = [
   { move:"ingestion", node:"ingestion", case:"accepted", title:"A farm year arrives",
-    s:"LMC finishes gathering a farm's year — DAERA, NIFAIS, GIS and scheme data — and posts it to the platform's one public endpoint. One farm, one footprint year, one submission.",
+    s:"LMC finishes gathering a farm's year — DAERA, NIFAIS, GIS and scheme data — and posts it to the platform's one public endpoint. One farm, one footprint year, one submission. A DAERA inspector's farm visit arrives the same way: the capture app sends it for checking, and an LMC Submitter requests the footprint — through this same door, like any other caller.",
     e:"LMC POSTs the farm-year payload. Auth + JSON validity first; the response is 202 plus an opaque carbon_footprint_id derived from the payload fingerprint.",
-    d:[["endpoint","POST /api/v1/sanssouci/carbonfootprints"],["identity","subject.guid only — identity-light"],["file","Ssos.Intake/V1Api.cs → SubmitAsync"]] },
-  { ghost:true, node:"ingestion", case:"accepted", title:"Replay is safe",
-    s:"If LMC sends the same submission twice, a fingerprint over the payload recognises it — identical bytes get the same answer back, and a changed payload under a known id is refused as a conflict.",
-    e:"PayloadFingerprint vs ssos.footprint_case → 202 idempotent_replay, or 409 conflict on a materially different payload. 400 SSOS-SCHEMA-000 for malformed JSON; 401 SSOS-AUTH-001 when the auth mode denies.",
-    d:[["replay","202 · idempotent_replay"],["conflict","409 · different fingerprint, same submission_id"],["file","Ssos.Intake/V1Api.cs + Ssos.Domain/Idempotency.cs"]] },
+    d:[["endpoint","POST /api/v1/sanssouci/carbonfootprints"],["identity","subject.guid only — identity-light"],["callers","LMC directly · inspector capture BFF, forwarding the exact checked bytes once an Sscf.Submitter requests (ADR 0063)"],["file","Ssos.Intake/V1Api.cs → SubmitAsync"]] },
+  { ghost:true, node:"ingestion", case:"accepted", title:"Replay is safe — correction supersedes",
+    s:"If LMC sends the same submission twice, a fingerprint over the payload recognises it — identical bytes get the same answer back. A changed payload under a known id is refused as a conflict; a changed payload under a new id is a correction — it supersedes the farm-year's current version rather than rewriting it.",
+    e:"PayloadFingerprint vs ssos.footprint_case → 202 idempotent_replay; 409 conflict on a different payload under the same submission_id; a new id carrying a different payload supersedes the at-rest case (held, failed or finished) → 202 with a new CF- id and supersedes naming the retired one; a correction while the current run is mid-flight → 409 SSOS-IDEM-004, and one that lost a race to a competing correction → 409 SSOS-IDEM-005. 400 SSOS-SCHEMA-000 for malformed JSON; 401 SSOS-AUTH-001 when the auth mode denies.",
+    d:[["replay","202 · idempotent_replay"],["conflict","409 · different fingerprint, same submission_id"],["correction","202 · new CF- id · supersedes — only once the current version is at rest (else 409 SSOS-IDEM-004)"],["file","Ssos.Intake/V1Api.cs + Ssos.Domain/Idempotency.cs + CaseVersioning"]] },
   { move:"staging", node:"staging", arte:[{node:"staging",name:"payload parts"}], case:"accepted", title:"Stage, then promote",
     s:"The payload lands where nothing is watching. Evidence of what arrived is kept before anything is judged — even a rejected submission leaves a trace.",
     e:"IntakeSequence.ProcessIntakeAsync stages parts into ssos-submission-staging (not watched) before contract validation — a refused submission still leaves evidence.",
@@ -532,14 +541,14 @@ const MID = [
     s:"The farm's data is mapped against the compiled contract bundle — controlled codes resolved by approved translations, never approximated — then assessed: is there enough here to plan a calculation?",
     e:"canonicalise (pinned stage label): ContractMapping + the contract bundle → contract.json under {year}/{guid}/{case}/; Readiness.AssessReadiness gates planning; the farm dataset + exceptions persist to ssos.* either way.",
     d:[["stage","canonicalise"],["artefact","contract.json → ssos-canonical"],["gates","translation absent → refuse (SANS_SOUCI) · readiness → hold (LMC)"],["file","Stages.ContractMapping.cs + Readiness.cs"]] },
-  { node:"orch", gate:"dispatch_fct", case:"planning", title:"Control gate — spending calls",
+  { node:"orch", gate:"dispatch_fct", case:"validating_readiness", title:"Control gate — spending calls",
     s:"Before anything irreversible, the orchestration asks the operator's control gate. Calling the calculator spends a shared estate budget — a posture switch can stop it here.",
     e:"check_control: ControlGate.ControlPermits(\"dispatch_fct\") — the estate posture is read before the irreversible step; a refused gate holds the case.",
     d:[["stage","check_control"],["action","dispatch_fct"],["file","Stages.Control.cs + ControlGate.cs"]] },
   { move:"preq", node:"preq", arte:[{node:"preq",name:"request-plan.json"}], case:"planning", title:"Plan every call",
-    s:"A plan names every calculator call this farm needs — derived from the contract data and the bundle's record wiring — and the whole task list is registered in a ledger before the first call goes out.",
-    e:"plan: Derivation.DeriveTaskSpecifications + routing rules → request-plan.json (PLAN-{case}) → ssos-provider-requests; IDispatchLedger.RecordPlannedAsync registers every task + fingerprint.",
-    d:[["stage","plan"],["artefact","request-plan.json"],["ledger","planned population known before call #1"],["file","Stages.Plan.cs + Derivation.cs + Planning.cs"]] },
+    s:"A plan names every calculator call this farm needs — derived from the contract data and the bundle's record wiring — and the whole task list is registered in a ledger before the first call goes out. A herd that spends part of the year at grass and part housed becomes two calls, one per diet period, never one blended diet.",
+    e:"plan: Derivation.DeriveTaskSpecifications + routing rules → request-plan.json (PLAN-{case}) → ssos-provider-requests; IDispatchLedger.RecordPlannedAsync registers every task + fingerprint. A split ruminant diet plans one calculation/animals-dmi-* task per diet.periods[] entry, each with its own intake, share of the reporting weeks and storage; the period is a facet in the sort key, so task ids are stable across builds.",
+    d:[["stage","plan"],["artefact","request-plan.json"],["split diet","one task per diet period · TaskSpecification.Facet · ADR 0062"],["ledger","planned population known before call #1"],["file","Stages.Plan.cs + Derivation.cs + Planning.cs + DietPeriods.cs"]] },
 ];
 
 const DISPATCH = [
@@ -548,21 +557,21 @@ const DISPATCH = [
     s:"The plan dispatches as one batch call per ≤1,000 items — the literal batch body is stored before the permit is spent, the whole estate shares one calculator budget, and a throttled call waits on a durable timer rather than spinning. Batch is the only dispatch path.",
     e:"dispatch_batch: control permit → ledger check (a replayed answer suppresses the call) → store batches/{key}.request.json → take permit → call calculation/batch → store batches/{key}.attempt-N.json + one exchanges/{taskId}.attempt-N.json per task — each carrying the item sent, the answer, and the batch it rode in. Item errors and whole-request 422 → hold; retryable → re-offered after a timer (≤20 rounds).",
     d:[["stage","dispatch_batch · ≤1,000 items a call"],["limiter","one permit per call — a plan of N tasks costs ⌈N/1,000⌉ requests"],["artefacts","batches/{key}.request.json · batches/{key}.attempt-N.json · exchanges/{taskId}.attempt-N.json"],["mode","none to pick — batch is the only path"],["file","Stages.DispatchBatch.cs + BatchRun.cs · BatchDispatcher.cs + BatchEvidence.cs"]] },
-  { move:"presp", node:"presp", arte:[{node:"presp",name:"exchanges/{taskId}.attempt-N.json"}], case:"reconciling", title:"Every task leaves one exchange record",
+  { move:"presp", node:"presp", arte:[{node:"presp",name:"exchanges/{taskId}.attempt-N.json"}], case:"calculating", title:"Every task leaves one exchange record",
     s:"Each task's exchange is already a single document — the item sent and the answer together, attempt-qualified so a retry never overwrites recorded evidence. There is no roll-up artefact and no collect stage: build_outputs reconciles by reading the exchange records.",
     e:"exchanges/{taskId}.attempt-N.json → ssos-provider-responses: per task — status, exchange flag, request item, reply body, and references to the batch documents it rode in.",
     d:[["evidence","one document per task per attempt"],["read by","build_outputs → Arrival.ReconcileArrivals"],["file","BatchEvidence.cs → StoreItemExchangeAsync"]] },
 ];
 
 const OUT = [
-  { node:"orch", gate:"render_report", case:"calculated", title:"Control gate — building output",
+  { node:"orch", gate:"render_report", case:"calculating", title:"Control gate — building output",
     s:"Another gate before the output is built — the operator's posture is re-read at every irreversible step, not once at the start.",
     e:"check_control: ControlPermits(\"render_report\") — refused gates hold; the case resumes where it was held.",
     d:[["stage","check_control"],["action","render_report"],["file","PipelineExtensions.cs → CheckClearanceFor"]] },
-  { move:"draft", node:"draft", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"}], case:"generating_output", title:"Reconcile, then build outputs",
-    s:"What arrived is reconciled against what was planned — an answered population that doesn't reconcile holds the case. Only then are the raw result and report model written. No figure is invented.",
-    e:"build_outputs: Arrival.ReconcileArrivals gates aggregation (hold owner SANS_SOUCI) → result.json (the only record of what the calculator returned) + report-model.json → ssos-output-draft-packages; farm calculations persist to ssos.*",
-    d:[["stage","build_outputs"],["artefacts","result.json · report-model.json"],["container","ssos-output-draft-packages"],["file","Stages.Outputs.cs + OutputStage.cs"]] },
+  { move:"draft", node:"draft", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"}], case:"calculated", title:"Reconcile, then build outputs",
+    s:"What arrived is reconciled against what was planned — an answered population that doesn't reconcile holds the case. Only then are the raw result and report model written. A split-diet herd gets one report row per period, never a summed figure. Net emissions take the calculator's own totals — its removals are negative, so they net off; if removals ever arrive positive, net is withheld with a reason rather than guessed. No figure is invented.",
+    e:"build_outputs: Arrival.ReconcileArrivals gates aggregation (hold owner SANS_SOUCI) → result.json (the only record of what the calculator returned) + report-model.json → ssos-output-draft-packages; farm calculations persist to ssos.*. Reconciliation is inline, so the case goes calculating → calculated directly — reconciling stays a published waypoint the stage need not pass through. ResultAggregation.NetEmissions = FCT total + FCT negative_emissions; a positive removals total is not FCT's sign → net Unavailable + cover flagged.",
+    d:[["stage","build_outputs"],["state","calculating → calculated (reconciling is optional)"],["artefacts","result.json · report-model.json"],["container","ssos-output-draft-packages"],["split diet","one report row per period: (at grass) · (housed)"],["net","total + removals (FCT reports removals ≤ 0) · positive → withheld"],["file","Stages.Outputs.cs + OutputStage.cs + FarmCalculations.cs"]] },
   { node:"renderer", arte:[{node:"draft",name:"footprint.pdf"}], case:"generating_output", title:"Render the report",
     s:"The renderer — the one component that carries a browser — reads the model from storage itself and produces the Carbon Footprint PDF. Transient failures retry on durable timers.",
     e:"render_pdf: the renderer container reads report-model.json from ssos-output-draft-packages and writes footprint.pdf — both ends of the render recorded; RenderRetry drives durable-timer retries.",
@@ -571,29 +580,29 @@ const OUT = [
     s:"The last gate. Release crosses the account boundary and starts delivery to DAERA — deliberately irreversible, deliberately gated.",
     e:"check_control: ControlPermits(\"release\") — delivery is irreversible once the manifest lands.",
     d:[["stage","check_control"],["action","release"],["file","Stages.Release.cs"]] },
-  { move:"outp", node:"outp", arte:[{node:"outp",name:"result.json"},{node:"outp",name:"report-model.json"},{node:"outp",name:"footprint.pdf"},{node:"outp",name:"manifest.json",kind:"last"}], case:"completed", title:"Release — manifest written last",
-    s:"The package crosses into the exchange account; every artefact is recorded with a checksum the store is asked to read back, and manifest.json is written last — the commit marker that actually releases it.",
-    e:"release: copy result.json + report-model.json + footprint.pdf → ssos-output-packages (d03); ssos.result_artefact rows before the manifest; the manifest attests to what is there, verified by reading checksums back.",
-    d:[["stage","release"],["marker","manifest.json — written last, Event Grid filters for it"],["boundary","d02 → d03 account separation is load-bearing"],["file","Stages.Release.cs"]] },
+  { move:"outp", node:"outp", arte:[{node:"outp",name:"{stem}.pdf"},{node:"outp",name:"{stem}.raw.json"},{node:"outp",name:"{stem}.result.json"},{node:"outp",name:"{stem}.manifest.json",kind:"last"}], case:"completed", title:"Release — renamed for DAERA, manifest written last",
+    s:"The package crosses into the exchange account under the agreed DAERA names — the PDF, the raw submission and the calculated result, filed by footprint year and acceptance date. Every artefact is recorded with a checksum the store is asked to read back, and the manifest is written last — the commit marker that actually releases it.",
+    e:"release: footprint.pdf + the stored submission.json + result.json → ssos-output-packages (d03) as {year}/{YYYY-MM-DD}/CFP_{year}_{guid}_{id}.{pdf,raw.json,result.json}; report-model.json stays in the draft; ssos.result_artefact rows before the manifest; manifest v2.0 names each file as written, verified by reading checksums back.",
+    d:[["stage","release"],["stem","{stem} = CFP_{year}_{guid}_{id} · folder {year}/{YYYY-MM-DD}"],["marker","{stem}.manifest.json — written last, Event Grid filters on the manifest.json suffix"],["boundary","d02 → d03 account separation is load-bearing"],["file","Stages.Release.cs + OutputPackageNaming.cs · ADR 0058"]] },
 ];
 
 const EXCHANGE = [
   { move:"eg2", node:"eg2", exch:"ready", title:"Release raises the second event",
     s:"The manifest landing raises the second event — release and delivery are separate concerns, on separate queues.",
-    e:"BlobCreated on manifest.json in ssos-output-packages → Event Grid → CloudEvents 1.0 → ssos-exchange.",
-    d:[["queue","ssos-exchange"],["watch","ssos-output-packages · manifest.json only"]] },
+    e:"BlobCreated on {stem}.manifest.json in ssos-output-packages → Event Grid → CloudEvents 1.0 → ssos-exchange.",
+    d:[["queue","ssos-exchange"],["watch","ssos-output-packages · blobs ending manifest.json"]] },
   { move:"sbx", node:"sbx", exch:"exchanging", title:"To the exchange app",
     s:"The exchange app — which can read only its own account — observes the released package.",
-    e:"fa-exchange parses the event; a blob naming an unexpected container is refused, a refusal completes the message rather than retrying it.",
+    e:"fa-exchange parses the event; a blob naming an unexpected container, or a manifest outside the agreed {year}/{YYYY-MM-DD}/CFP_… layout, is refused — a refusal completes the message rather than retrying it.",
     d:[["host","fa-exchange · .NET isolated"],["file","ExchangeFunction.cs"]] },
   { move:"daera", node:"daera", exch:"delivered", title:"Handed toward DAERA",
     s:"The Carbon Footprint Output Pack heads to DAERA — for DOLS and analytics. The delivery channel itself is still being agreed, so today the platform records exactly what it would deliver rather than inventing a destination.",
     e:"DeliveryDecision.DeliverToDaera — the channel is undecided (#28): push, pull, or a DAERA-owned account. The handler records the intent and refuses to guess.",
     d:[["exchange","not_started → ready → exchanging → delivered"],["open question","#28 delivery channel"],["file","ExchangeFunction.cs + DeliveryDecision.cs"]] },
   { node:"daera", case:"completed", exch:"delivered", title:"Submitted to delivered",
-    s:"One farm year, end to end — every artefact named, every refusal a state with an owner, nothing invented. LMC reads status and results back through the same API; the ops app observes everything, touches nothing.",
-    e:"Case completed. Read-back: GET …/{id}/status + /results (409 until output is available). fa-ops is read-only by ADR 0045.",
-    d:[["read-back","GET /api/v1/sanssouci/carbonfootprints/{id}/status · /results"],["posture","fa-ops observes; it does not act"],["file","V1Api.cs · OpsApi.cs"]] },
+    s:"One farm year, end to end — every artefact named, every refusal a state with an owner, nothing invented. LMC reads status back through the same API; the ops app observes everything, touches nothing.",
+    e:"Case completed. Read-back: GET …/{id}/status (warnings[] for open farm-data exceptions, errors[] for a hold or failure). fa-ops is read-only by ADR 0045. Every stage log line carries SubmissionId + CaseId, so App Insights traces a case end to end; a refused status write is logged rather than lost.",
+    d:[["read-back","GET /api/v1/sanssouci/carbonfootprints/{id}/status"],["posture","fa-ops observes; it does not act"],["telemetry","stage scope: SubmissionId · CaseId · Stage"],["file","V1Api.cs · OpsApi.cs"]] },
 ];
 
 const HELD_TAIL = [
@@ -603,17 +612,17 @@ const HELD_TAIL = [
     s:"Readiness could not be established — maybe a required field is missing or unmapped. The case holds with a named owner; its contract record, farm dataset and every exception are already persisted for the reviewer.",
     e:"canonicalise → Readiness.AssessReadiness: MayPlan false → held, blocker_owner LMC. Evidence persists regardless — a held submission is exactly the population the review queue exists for.",
     d:[["stage","canonicalise"],["state","validating_readiness → held"],["owner","LMC"],["file","Stages.Canonicalise.cs + Readiness.cs"]] },
-  { resume:true, node:"orch", case:"planning", title:"Resumed where it held",
-    s:"Once the blocker is dispositioned — LMC supplies the missing data — the case resumes where it was held. Nothing is replayed from the start; every stage's artefacts already exist under the case prefix.",
-    e:"held → planning is a declared transition; replayed stages overwrite the same case-derived keys, so resume is idempotent by construction.",
-    d:[["transition","held → planning (declared)"],["file","CaseLifecycle.cs"]] },
+  { resume:true, node:"orch", case:"planning", title:"Corrected, not overwritten",
+    s:"Once the blocker is dispositioned — LMC (or the inspector, through capture's correct-and-resubmit) fixes the source data and resubmits under a new submission id — the held version is superseded: a new case version opens under a new id, runs the same stages, and writes under its own artefact prefix. The held version stays as the record of what was submitted first.",
+    e:"A correction is CaseVersioning.CorrectCase + SaveCorrectionAsync: the predecessor gains superseded_by (and nothing else), the successor opens clean at Accepted under its own prefix. Replaying the *identical* payload instead resumes the same case — replayed stages overwrite the same case-derived keys, so resume is idempotent by construction.",
+    d:[["transition","held → superseded; vN+1 opens at accepted"],["chain","supersedes / superseded_by link both directions"],["guard","only an at-rest version (held · failed · finished) can be superseded — mid-flight → 409 SSOS-IDEM-004"],["file","CaseVersioning.cs + CaseLifecycle.cs + ADR 0053"]] },
   { node:"orch", dots:true, arte:[{node:"preq",name:"request-plan.json"},{node:"presp",name:"exchanges/{taskId}.attempt-N.json"}], case:"calculating", title:"Plan, dispatch — as before",
     s:"From here the journey is identical: plan, batch dispatch — the same calculator budget, one call per ≤1,000 items, one exchange record per task.",
     e:"plan → dispatch_batch — see the journey scenario for the full mechanics.",
     d:[["stages","plan · dispatch_batch"]] },
-  { move:"outp", node:"outp", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"},{node:"draft",name:"footprint.pdf"},{node:"outp",name:"result.json"},{node:"outp",name:"report-model.json"},{node:"outp",name:"footprint.pdf"},{node:"outp",name:"manifest.json",kind:"last"}], case:"completed", title:"Outputs, render, release",
-    s:"Reconciliation, report model, PDF, release — manifest.json written last into the watched container.",
-    e:"build_outputs → render_pdf → release — manifest.json is the commit marker into ssos-output-packages.",
+  { move:"outp", node:"outp", arte:[{node:"draft",name:"result.json"},{node:"draft",name:"report-model.json"},{node:"draft",name:"footprint.pdf"},{node:"outp",name:"{stem}.pdf"},{node:"outp",name:"{stem}.raw.json"},{node:"outp",name:"{stem}.result.json"},{node:"outp",name:"{stem}.manifest.json",kind:"last"}], case:"completed", title:"Outputs, render, release",
+    s:"Reconciliation, report model, PDF, release — the manifest written last into the watched container.",
+    e:"build_outputs → render_pdf → release — {stem}.manifest.json is the commit marker into ssos-output-packages.",
     d:[["stages","build_outputs · render_pdf · release"]] },
   { move:"daera", node:"daera", exch:"delivered", title:"Delivered after the hold",
     s:"The pack reaches DAERA — a hold costs time, never correctness. The alternative would be a footprint built on data nobody verified.",
