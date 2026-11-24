@@ -10,6 +10,10 @@ Carbon Footprinting Orchestration Platform — built for stakeholders and new st
 `index.html` is the whole site — no build, no dependencies, no network requests.
 Double-click it, or serve the folder with any static file server.
 
+`overview.html` is the plain-English version for DAERA, LMC and other non-technical
+readers: who does what, the six steps a farm's year goes through, what happens when
+something isn't right, and the principles behind it. No component names.
+
 `non-happy-paths.html` is a companion page: what happens when a submission does
 not sail through — `held`, `completed_with_warnings`, `failed`, refused at the
 door, replays and conflicts — with deep links back into the animated scenarios.

@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<!--
+  ILLUSTRATIVE — a plain-English overview of how a farm's Carbon Footprint is produced.
+  Written for DAERA, LMC and other non-technical readers. No real farm data, no network
+  requests. The technical companion is index.html (the animated walkthrough).
+-->
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm Carbon Footprints</title>
+<style>
+  :root {
+    --bg: #f6f7f4; --surface: #ffffff; --surface2: #eef2ec; --line: #d9dfd5;
+    --text: #1d2a22; --dim: #5a6b60; --accent: #2f7d57; --accent-soft: #e2f0e8;
+    --amber: #a8640b; --amber-soft: #fbf0dd; --blue: #2c6aa0; --blue-soft: #e3eef8;
+    --violet: #6a4fb3; --violet-soft: #ece7f8;
+    --shadow: 0 1px 2px rgba(20,40,30,.06), 0 4px 16px rgba(20,40,30,.06);
+    --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101613; --surface: #17201b; --surface2: #1d2922; --line: #2c3a32;
+      --text: #e6eee9; --dim: #9db0a4; --accent: #5cc493; --accent-soft: #1d3428;
+      --amber: #f0b45a; --amber-soft: #3a2c16; --blue: #7fb5e6; --blue-soft: #1a2a3a;
+      --violet: #b3a1ee; --violet-soft: #2a2440;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101613; --surface: #17201b; --surface2: #1d2922; --line: #2c3a32;
+    --text: #e6eee9; --dim: #9db0a4; --accent: #5cc493; --accent-soft: #1d3428;
+    --amber: #f0b45a; --amber-soft: #3a2c16; --blue: #7fb5e6; --blue-soft: #1a2a3a;
+    --violet: #b3a1ee; --violet-soft: #2a2440;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 var(--font);
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  a { color: var(--accent); }
+
+  header.top { padding: 40px 0 8px; }
+  .eyebrow {
+    display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
+    padding: 4px 10px; border-radius: 999px;
+  }
+  h1 { font-size: clamp(28px, 5vw, 42px); line-height: 1.15; margin: 14px 0 12px; letter-spacing: -.01em; }
+  .lede { font-size: 18px; color: var(--dim); max-width: 720px; margin: 0; }
+  .note { font-size: 13px; color: var(--dim); margin-top: 14px; }
+
+  section { padding: 36px 0 8px; }
+  h2 { font-size: 24px; margin: 0 0 6px; letter-spacing: -.005em; }
+  .sub { color: var(--dim); margin: 0 0 20px; max-width: 720px; }
+
+  /* who's who */
+  .cast { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .who {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; box-shadow: var(--shadow);
+  }
+  .who .badge {
+    width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+    margin-bottom: 10px;
+  }
+  .who h3 { font-size: 16px; margin: 0 0 4px; }
+  .who p { margin: 0; font-size: 14px; color: var(--dim); }
+  .b-lmc { background: var(--blue-soft); color: var(--blue); }
+  .b-ss  { background: var(--accent-soft); color: var(--accent); }
+  .b-fct { background: var(--violet-soft); color: var(--violet); }
+  .b-daera { background: var(--amber-soft); color: var(--amber); }
+
+  /* journey */
+  .journey {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+    box-shadow: var(--shadow); padding: 22px;
+  }
+  .track { position: relative; margin: 6px 4px 22px; }
+  .track ol {
+    list-style: none; margin: 0; padding: 0; display: grid;
+    grid-template-columns: repeat(6, 1fr); position: relative; z-index: 1;
+  }
+  .rail {
+    position: absolute; left: calc(100% / 12); right: calc(100% / 12); top: 22px;
+    height: 4px; background: var(--line); border-radius: 4px;
+  }
+  .rail-fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent);
+    border-radius: 4px; transition: width .6s ease;
+  }
+  .stop { text-align: center; }
+  .stop button {
+    all: unset; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center;
+    gap: 8px; padding: 0 4px; border-radius: 10px;
+  }
+  .stop button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+  .dot {
+    width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--surface); border: 3px solid var(--line); color: var(--dim);
+    transition: background .3s, border-color .3s, color .3s, transform .3s;
+  }
+  .stop.done .dot { border-color: var(--accent); color: var(--accent); }
+  .stop.on .dot { background: var(--accent); border-color: var(--accent); color: #fff; transform: scale(1.08); }
+  .stop .lbl { font-size: 13px; font-weight: 600; color: var(--dim); max-width: 120px; line-height: 1.3; }
+  .stop.on .lbl { color: var(--text); }
+
+  .panel { display: grid; grid-template-columns: 1.4fr 1fr; gap: 22px; align-items: start; }
+  .panel h3 { font-size: 22px; margin: 0 0 4px; }
+  .step-no { font-size: 13px; font-weight: 600; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; }
+  .panel p { margin: 8px 0; }
+  .aside {
+    background: var(--surface2); border-radius: 12px; padding: 16px;
+  }
+  .aside h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+  .aside ul { margin: 0 0 12px; padding-left: 18px; }
+  .aside li { margin: 4px 0; font-size: 15px; }
+  .status {
+    display: inline-flex; gap: 8px; align-items: center; font-size: 13px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+  }
+  .status b { color: var(--accent); }
+  .panel-body { min-height: 230px; }
+  .fade { animation: fade .35s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
+  .btn {
+    font: 600 15px var(--font); padding: 9px 16px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .pos { margin-left: auto; font-size: 14px; color: var(--dim); }
+
+  /* cards */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; box-shadow: var(--shadow);
+  }
+  .card h3 { font-size: 17px; margin: 0 0 6px; }
+  .card p { margin: 0; font-size: 15px; color: var(--dim); }
+  .card .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; margin-bottom: 10px; }
+  .t-amber { background: var(--amber-soft); color: var(--amber); }
+  .t-green { background: var(--accent-soft); color: var(--accent); }
+  .t-blue { background: var(--blue-soft); color: var(--blue); }
+
+  .promises { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 28px; padding: 0; margin: 0; list-style: none; }
+  .promises li { display: flex; gap: 12px; align-items: flex-start; }
+  .promises svg { flex: none; margin-top: 3px; color: var(--accent); }
+  .promises b { display: block; }
+  .promises span { color: var(--dim); font-size: 15px; }
+
+  footer { padding: 36px 0 48px; color: var(--dim); font-size: 14px; }
+  footer .more { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+
+  @media (max-width: 860px) {
+    .cast { grid-template-columns: repeat(2, 1fr); }
+    .cards { grid-template-columns: 1fr; }
+    .panel { grid-template-columns: 1fr; }
+    .promises { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) {
+    .journey { padding: 16px; }
+    .track ol { grid-template-columns: repeat(6, 1fr); }
+    .dot { width: 38px; height: 38px; border-width: 2px; }
+    .dot svg { width: 18px; height: 18px; }
+    .rail { top: 17px; }
+    .stop .lbl { display: none; }
+    .cast { grid-template-columns: 1fr; }
+    .pos { margin-left: 0; width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">DAERA Carbon Footprinting · overview</span>
+    <h1>How a farm's carbon footprint is produced</h1>
+    <p class="lede">From a farm's year of records to a finished Carbon Footprint report for DAERA, in six steps.
+      This page explains what happens at each step, who is involved, and what happens when something isn't quite right.</p>
+    <p class="note">Illustrative only. No real farm data is shown.</p>
+  </header>
+
+  <section aria-labelledby="cast-h">
+    <h2 id="cast-h">Who does what</h2>
+    <p class="sub">Four parties each have one clear job.</p>
+    <div class="cast">
+      <div class="who">
+        <div class="badge b-lmc" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6"/></svg>
+        </div>
+        <h3>LMC</h3>
+        <p>Brings together each farm's records for the year and sends them in when they're ready.</p>
+      </div>
+      <div class="who">
+        <div class="badge b-ss" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
+        </div>
+        <h3>Sans Souci platform</h3>
+        <p>Checks, prepares and tracks every farm's data, and assembles the finished report. It never calculates emissions itself.</p>
+      </div>
+      <div class="who">
+        <div class="badge b-fct" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M16 11h0M8 15h2M12 15h2M8 18h8"/></svg>
+        </div>
+        <h3>Farm Carbon Toolkit</h3>
+        <p>The independent calculator. Every emissions figure in the report comes from here.</p>
+      </div>
+      <div class="who">
+        <div class="badge b-daera" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+        </div>
+        <h3>DAERA</h3>
+        <p>Receives the finished Carbon Footprint for each farm, for DOLS and for analytics.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="journey-h">
+    <h2 id="journey-h">The journey, step by step</h2>
+    <p class="sub">Press <b>Play</b> to watch a farm's year go through, or pick any step.</p>
+
+    <div class="journey">
+      <div class="track">
+        <div class="rail" aria-hidden="true"><div class="rail-fill" id="railFill"></div></div>
+        <ol id="stops"></ol>
+      </div>
+
+      <div class="panel-body" id="panel" aria-live="polite"></div>
+
+      <div class="controls">
+        <button class="btn primary" id="play">▶ Play</button>
+        <button class="btn" id="prev" aria-label="Previous step">‹ Back</button>
+        <button class="btn" id="next" aria-label="Next step">Next ›</button>
+        <span class="pos" id="pos"></span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="issues-h">
+    <h2 id="issues-h">When something isn't quite right</h2>
+    <p class="sub">Most farms go straight through. When one doesn't, it is paused and the right person is told. Nothing is guessed to keep it moving.</p>
+    <div class="cards">
+      <div class="card">
+        <span class="tag t-amber">Paused, not failed</span>
+        <h3>Something is missing or unclear</h3>
+        <p>If information is missing, or doesn't match anything the calculator recognises, the farm is paused.
+          The status says exactly what is needed and who needs to act: usually LMC, sometimes us.</p>
+      </div>
+      <div class="card">
+        <span class="tag t-blue">Nothing is overwritten</span>
+        <h3>Corrections start a new version</h3>
+        <p>Once the information is fixed, it is sent in again and runs as a new version.
+          The earlier version is kept exactly as it was, so there is always a clear record of what changed and when.</p>
+      </div>
+      <div class="card">
+        <span class="tag t-green">Checked before every big step</span>
+        <h3>Nothing goes out unchecked</h3>
+        <p>Before the farm goes to the calculator, before the report is produced, and before anything is sent to DAERA,
+          the platform confirms it is safe to go ahead. If not, the farm waits.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="prom-h">
+    <h2 id="prom-h">What you can rely on</h2>
+    <p class="sub">These principles run through every step.</p>
+    <ul class="promises">
+      <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        <div><b>No invented figures</b><span>Every emissions number comes from the Farm Carbon Toolkit. The platform never calculates, estimates or fills in a figure.</span></div></li>
+      <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        <div><b>"Not available" never means zero</b><span>If a figure couldn't be produced, the report says so and explains why, rather than showing a misleading zero.</span></div></li>
+      <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        <div><b>Every number can be traced</b><span>Each value in the report can be followed back to the farm record it came from and the calculator answer it produced.</span></div></li>
+      <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        <div><b>Farm identity kept to a minimum</b><span>The platform works from an anonymous farm reference. It never needs a farm's name, address or postcode.</span></div></li>
+      <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        <div><b>People decide the hard cases</b><span>Anything missing, conflicting, duplicated or uncertain goes to a person to resolve, not to an automatic guess.</span></div></li>
+      <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        <div><b>Progress is always visible</b><span>LMC can check where any farm is at any time, and if it's paused, why.</span></div></li>
+    </ul>
+  </section>
+
+  <footer>
+    <div class="more">
+      <a class="btn" href="index.html">See the technical walkthrough →</a>
+      <a class="btn" href="non-happy-paths.html">Every non-standard outcome, in detail →</a>
+    </div>
+    Illustrative overview of the Sans Souci Carbon Footprinting Orchestration Platform for the DAERA
+    Carbon Footprinting project. All examples are synthetic.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const ICON = {
+  gather: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  receive: '<path d="M4 13l4 4L20 5"/>',
+  prepare: '<path d="M14 4l6 6-10 10H4v-6L14 4z"/>',
+  calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h2M12 12h2M8 16h2M12 16h2"/>',
+  report: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+  deliver: '<path d="M3 12h13M12 6l6 6-6 6"/><path d="M21 4v16"/>',
+};
+const STEPS = [
+  { key: "gather", label: "Farm data gathered", title: "A farm's year is gathered",
+    body: [
+      "LMC brings together a farm's records for the year: livestock, crops, land, fertiliser, fuel, feed and more, from DAERA, NIFAIS, mapping and scheme sources.",
+      "Some farms will instead have a DAERA inspector visit and record the information on site. A colleague at LMC then checks that visit before it goes any further.",
+      "When the farm's year is complete, LMC sends it in. One farm, one year, one submission.",
+    ],
+    you: ["Information arrives from one trusted source: LMC.", "The farm is identified by an anonymous reference, never by name or address."],
+    who: "LMC (and DAERA inspectors, for farm visits)", status: "—" },
+  { key: "receive", label: "Received and checked", title: "Received, checked and given a reference",
+    body: [
+      "As soon as the farm's data arrives, the platform checks it is complete and in the agreed format.",
+      "If it is, LMC gets a reference number straight away to track that farm. If it isn't, LMC is told immediately exactly what to fix, and nothing further happens until it's sent again.",
+      "Sending the same farm twice by accident is harmless: the platform recognises it and gives back the same reference.",
+    ],
+    you: ["An instant yes or no, with clear reasons for a no.", "A copy of what arrived is kept, even when it's turned away."],
+    who: "Sans Souci platform", status: "accepted" },
+  { key: "prepare", label: "Prepared for the calculator", title: "Prepared for the calculator",
+    body: [
+      "Farm records and calculator questions don't use the same language. The platform translates each record into the exact form the Farm Carbon Toolkit expects, using only approved translations. Nothing is approximated.",
+      "Details are handled as they happen on the farm. For example, a herd that spends part of the year at grass and part housed is sent as two separate periods, not blended into one.",
+      "If anything is missing, unclear or doesn't match, the farm is paused here and the right person is told what is needed.",
+    ],
+    you: ["Only prepared, checked information reaches the calculator.", "Gaps are flagged to a person, never filled in by guesswork."],
+    who: "Sans Souci platform", status: "canonicalising · validating_readiness" },
+  { key: "calc", label: "Calculated", title: "Calculated by the Farm Carbon Toolkit",
+    body: [
+      "The prepared farm is sent to the Farm Carbon Toolkit, the independent calculator. It works out the emissions for every part of the farm.",
+      "The platform keeps an exact record of what was sent and what came back, for every single calculation.",
+      "If the calculator is busy, the platform simply waits its turn and tries again. Nothing is lost or sent twice.",
+    ],
+    you: ["Every emissions figure comes from the calculator, not from us.", "A complete record of each calculation is kept for audit."],
+    who: "Farm Carbon Toolkit (with the platform keeping the record)", status: "planning · calculating" },
+  { key: "report", label: "Report produced", title: "The Carbon Footprint report is produced",
+    body: [
+      "The platform first confirms that every calculation it asked for has come back. Then it gathers the results into the farm's Carbon Footprint: a clear PDF report plus the results data behind it.",
+      "Every figure is the calculator's own. Where a herd was split by period, each period gets its own line. Where a figure couldn't be produced, the report says so and explains why.",
+    ],
+    you: ["A readable report for the farm, backed by the full results.", "Gaps are shown honestly, never hidden as zeros."],
+    who: "Sans Souci platform", status: "calculated · generating_output" },
+  { key: "deliver", label: "Delivered to DAERA", title: "Delivered to DAERA",
+    body: [
+      "The finished Carbon Footprint Output Pack is released under DAERA's agreed file naming, ready for DOLS and for analytics.",
+      "Each file is checked once it is stored, so DAERA receives exactly what was produced.",
+      "The final delivery method is still being agreed with DAERA. Until then, the platform records precisely what it would deliver.",
+    ],
+    you: ["A complete, consistently named pack for every farm.", "LMC can see that the farm is complete."],
+    who: "Sans Souci platform → DAERA", status: "completed" },
+];
+
+const $ = id => document.getElementById(id);
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let idx = 0, timer = null;
+
+function svg(path, size = 22) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+}
+
+function buildStops() {
+  $("stops").innerHTML = STEPS.map((s, i) => `
+    <li class="stop" id="stop-${i}">
+      <button type="button" data-i="${i}" aria-label="Step ${i + 1}: ${s.label}">
+        <span class="dot">${svg(ICON[s.key])}</span>
+        <span class="lbl">${s.label}</span>
+      </button>
+    </li>`).join("");
+  $("stops").addEventListener("click", e => {
+    const b = e.target.closest("button[data-i]"); if (!b) return;
+    stop(); show(+b.dataset.i);
+  });
+}
+
+function show(i) {
+  idx = Math.max(0, Math.min(STEPS.length - 1, i));
+  const s = STEPS[idx];
+  STEPS.forEach((_, j) => {
+    const el = $("stop-" + j);
+    el.classList.toggle("on", j === idx);
+    el.classList.toggle("done", j < idx);
+    el.querySelector("button").setAttribute("aria-current", j === idx ? "step" : "false");
+  });
+  $("railFill").style.width = (idx / (STEPS.length - 1) * 100) + "%";
+  $("panel").innerHTML = `
+    <div class="panel fade">
+      <div>
+        <div class="step-no">Step ${idx + 1} of ${STEPS.length}</div>
+        <h3>${s.title}</h3>
+        ${s.body.map(p => `<p>${p}</p>`).join("")}
+      </div>
+      <div class="aside">
+        <h4>What this means for you</h4>
+        <ul>${s.you.map(y => `<li>${y}</li>`).join("")}</ul>
+        <h4>Who's involved</h4>
+        <p style="margin:0 0 12px;font-size:15px">${s.who}</p>
+        <span class="status" title="What LMC sees when checking progress">Status shown: <b>${s.status}</b></span>
+      </div>
+    </div>`;
+  $("pos").textContent = `Step ${idx + 1} of ${STEPS.length}`;
+  $("prev").disabled = idx === 0;
+  $("next").disabled = idx === STEPS.length - 1;
+}
+
+function stop() {
+  clearInterval(timer); timer = null;
+  $("play").textContent = "▶ Play";
+}
+function play() {
+  if (timer) { stop(); return; }
+  if (idx === STEPS.length - 1) show(0);
+  $("play").textContent = "❚❚ Pause";
+  timer = setInterval(() => {
+    if (idx >= STEPS.length - 1) { stop(); return; }
+    show(idx + 1);
+  }, RM ? 4000 : 6500);
+}
+
+buildStops();
+show(0);
+$("play").addEventListener("click", play);
+$("prev").addEventListener("click", () => { stop(); show(idx - 1); });
+$("next").addEventListener("click", () => { stop(); show(idx + 1); });
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input,select,textarea")) return;
+  if (e.key === "ArrowRight") { stop(); show(idx + 1); }
+  if (e.key === "ArrowLeft") { stop(); show(idx - 1); }
+});
+</script>
+</body>
+</html>
